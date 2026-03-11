@@ -2,6 +2,7 @@ package com.example.ytdlweb
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.springframework.core.env.Environment
 import org.springframework.stereotype.Service
 import java.io.File
 import java.net.URLEncoder
@@ -10,7 +11,7 @@ import java.util.stream.StreamSupport
 import kotlin.concurrent.thread
 
 @Service
-class YtDlpService(private val objectMapper: ObjectMapper) {
+class YtDlpService(private val objectMapper: ObjectMapper, private val env: Environment) {
 
     private val videoDetails = ConcurrentHashMap<String, VideoDetails>()
     private val downloadProgress = ConcurrentHashMap<String, CacheInfo>()
@@ -86,16 +87,27 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
                     formatId
                         ?: "bestvideo[height>=360][height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height>=360][height<=720][ext=mp4]"
                 )
+
                 if (formatId == null) {
                     args += listOf(
                         "-S", "height",
                         "--merge-output-format", "mp4"
                     )
                 }
+
                 args += listOf(
                     "--sponsorblock-remove", "sponsor,selfpromo",
-                    "--extractor-args", "youtube:player_client=android",
-                    "--cookies-from-browser", "chrome:/yt-dlp-profile",
+                    "--extractor-args", "youtube:player_client=android"
+                )
+
+                val cookies = env.getProperty("COOKIES")
+                if (cookies!= null) {
+                    args += listOf(
+                        "--cookies", cookies
+                    )
+                }
+
+                args += listOf(
                     "--newline",
                     "-o", outputFile.absolutePath,
                     url
