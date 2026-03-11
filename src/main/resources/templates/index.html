@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -28,12 +28,21 @@
 <!-- Details Modal -->
 <div id="modal" class="modal">
     <div class="modal-content">
+        <div id="loaderModal" class="loader"></div>
         <div id="videoPlayerContainer" class="video-player-container" style="display: none;">
             <video id="videoPlayer" controls width="100%"></video>
         </div>
-        <h2>Select Format</h2>
-        <div id="formatList" class="format-list">
-            <!-- Formats will be injected here -->
+        <div id="cacheActions" class="format-list" style="text-align: center; margin-top: 1rem;">
+            <div id="progressContainer" style="display: none; text-align: left; margin: 1rem 0;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span>Loading...</span>
+                    <span id="progressText">0.0%</span>
+                </div>
+                <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; height: 10px;">
+                    <div id="progressBar" style="background: #3EA6FF; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                </div>
+            </div>
+            <button id="downloadBtn" class="download-btn" style="display: none;">Download</button>
         </div>
     </div>
 </div>

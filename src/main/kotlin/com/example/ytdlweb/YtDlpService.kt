@@ -4,22 +4,18 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.stereotype.Service
 import java.io.File
-import java.io.OutputStream
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.stream.StreamSupport
-import kotlin.math.absoluteValue
+import kotlin.concurrent.thread
 
 @Service
 class YtDlpService(private val objectMapper: ObjectMapper) {
-    private val cacheDir = File("cache")
-    private val activeDownloads = ConcurrentHashMap<Int, Process>()
 
-    init {
-        if (!cacheDir.exists()) {
-            cacheDir.mkdirs()
-        }
-    }
+    private val videoDetails = ConcurrentHashMap<String, VideoDetails>()
+    private val downloadProgress = ConcurrentHashMap<String, CacheInfo>()
+    private val activeProcesses = ConcurrentHashMap<String, Process>()
+    private val cacheDir = File("cache").apply { mkdirs() }
 
     fun search(query: String): List<VideoInfo> {
         val process = ProcessBuilder("yt-dlp", "--dump-json", "--flat-playlist", "ytsearch10:$query").start()
@@ -36,54 +32,114 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
     }
 
     fun getVideoDetails(url: String): VideoDetails {
+        if (videoDetails.containsKey(url)) return videoDetails[url]!!
+
         val process = ProcessBuilder("yt-dlp", "--dump-json", url).start()
 
         val node = objectMapper.readTree(process.inputStream)
         process.waitFor()
 
-        val formats = node.get("formats").map { format ->
-            FormatInfo(
-                id = format.get("format_id").asText(),
-                ext = format.get("ext").asText(),
-                resolution = format.get("resolution")?.asText() ?: "N/A",
-                note = format.get("format_note")?.asText() ?: "",
-                vcodec = format.get("vcodec")?.asText() ?: "none",
-                acodec = format.get("acodec")?.asText() ?: "none",
-                url = format.get("url").asText()
-            )
-        }
+        val format = node.get("formats")?.mapNotNull { format ->
+            try {
+                FormatInfo(
+                    id = format.get("format_id").asText(),
+                    ext = format.get("ext").asText(),
+                    resolution = format.get("resolution")?.asText(),
+                    note = format.get("format_note")?.asText(),
+                    vcodec = format.get("vcodec")?.asText() ?: "none",
+                    acodec = format.get("acodec")?.asText() ?: "none",
+                    url = format.get("url").asText()
+                )
+            } catch (_: Exception) {
+                null
+            }
+        }?.filter { it.ext == "mp4" && it.vcodec != "none" && it.acodec != "none" }
+            ?.filter { it.resolution?.matches(Regex("""^\d{2,5}x\d{2,5}$""")) ?: false }
+            ?.associate { it.id to it.resolution!!.split("x").last().toInt() }
+            ?.filter { it.value in 360..720 }
+            ?.minByOrNull { it.value }
 
-        return VideoDetails(info = parseVideoInfo(node), formats = formats)
+        val videoInfo = parseVideoInfo(node)
+        val details = VideoDetails(info = videoInfo, cacheInfo = getCacheStatus(videoInfo.id), formatId = format?.key)
+        videoDetails[url] = details
+        return details
     }
 
-    fun streamDownload(url: String, formatId: String, outputStream: OutputStream) {
-        val process = ProcessBuilder("yt-dlp", "-f", formatId, "-o", "-", url).start()
-
-        process.inputStream.use { input -> input.copyTo(outputStream) }
-        process.waitFor()
+    fun getCacheStatus(videoId: String): CacheInfo {
+        if (File(cacheDir, "$videoId.mp4").exists()) {
+            return CacheInfo(CacheStatus.CACHED, 100.0)
+        }
+        return downloadProgress[videoId] ?: CacheInfo(CacheStatus.NONE, 0.0)
     }
 
-    fun preview(url: String, formatId: String? = null): File {
-        val hash = url.hashCode().absoluteValue
-        val filename = "${hash}.mp4"
-        val file = File(cacheDir, filename)
-        val partFile = File(cacheDir, "$filename.part")
+    fun startCaching(url: String, videoId: String, formatId: String? = null) {
+        if (getCacheStatus(videoId).status != CacheStatus.NONE) return
 
-        if (file.exists()) return file
-        if (partFile.exists() || activeDownloads.containsKey(hash)) return partFile
+        downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
 
-        if (formatId != null) {
-            val process = ProcessBuilder("yt-dlp", "-f", formatId, "-o", file.absolutePath, url).start()
-            activeDownloads[hash] = process
+        thread {
+            try {
+                val outputFile = File(cacheDir, "$videoId.mp4")
+                val args = mutableListOf(
+                    "yt-dlp",
+                    "-f",
+                    formatId
+                        ?: "bestvideo[height>=360][height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height>=360][height<=720][ext=mp4]"
+                )
+                if (formatId == null) {
+                    args += listOf(
+                        "-S", "height",
+                        "--merge-output-format", "mp4"
+                    )
+                }
+                args += listOf(
+                    "--sponsorblock-remove", "sponsor,selfpromo",
+                    "--newline",
+                    "-o", outputFile.absolutePath,
+                    url
+                )
 
-            // Cleanup on exit
-            Thread {
-                process.waitFor()
-                activeDownloads.remove(hash)
-            }.start()
+                val process = ProcessBuilder(args).redirectErrorStream(true).start()
+
+                val regex = Regex("""\[download\]\s+(\d+\.\d+)%""")
+                activeProcesses[videoId] = process
+
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        regex.find(line)?.let { matchResult ->
+                            val progress = matchResult.groupValues[1].toDoubleOrNull() ?: 0.0
+                            downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, progress)
+                        }
+                    }
+                }
+
+                val exitCode = process.waitFor()
+                activeProcesses.remove(videoId)
+                if (exitCode == 0 && outputFile.exists()) {
+                    downloadProgress.remove(videoId) // Fully cached, rely on file existence
+                } else {
+                    downloadProgress[videoId] = CacheInfo(CacheStatus.NONE, 0.0) // Failed
+                    // Cleanup partial file
+                    if (outputFile.exists() && exitCode != 0) {
+                        try {
+                            outputFile.delete()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                activeProcesses.remove(videoId)
+                downloadProgress[videoId] = CacheInfo(CacheStatus.NONE, 0.0) // Failed
+            }
         }
+    }
 
-        return partFile
+    fun cancelCaching(videoId: String) {
+        activeProcesses[videoId]?.let { process ->
+            process.destroy()
+            activeProcesses.remove(videoId)
+        }
+        downloadProgress.remove(videoId)
     }
 
     private fun parseVideoInfo(node: JsonNode): VideoInfo {
@@ -106,16 +162,29 @@ data class VideoInfo(
     val url: String,
     val thumbnail: String,
     val duration: String,
-    val uploader: String,
+    val uploader: String
 )
 
-data class VideoDetails(val info: VideoInfo, val formats: List<FormatInfo>)
+enum class CacheStatus {
+    NONE, DOWNLOADING, CACHED
+}
+
+data class CacheInfo(
+    val status: CacheStatus,
+    val progress: Double
+)
+
+data class VideoDetails(
+    val info: VideoInfo,
+    val cacheInfo: CacheInfo,
+    val formatId: String?
+)
 
 data class FormatInfo(
     val id: String,
     val ext: String,
-    val resolution: String,
-    val note: String,
+    val resolution: String?,
+    val note: String?,
     val vcodec: String,
     val acodec: String,
     val url: String

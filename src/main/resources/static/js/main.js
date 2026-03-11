@@ -3,11 +3,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultsGrid = document.getElementById('resultsGrid');
     const loader = document.getElementById('loader');
     const modal = document.getElementById('modal');
-    const formatList = document.getElementById('formatList');
+    const loaderModal = document.getElementById('loaderModal');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const downloadBtn = document.getElementById('downloadBtn');
     const videoPlayer = document.getElementById('videoPlayer');
     const videoPlayerContainer = document.getElementById('videoPlayerContainer');
 
     let searchTimeout;
+    let pollInterval;
+    let currentVideoId = null;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const vParam = urlParams.get('v');
+    if (vParam) {
+        // give modal time to initialize functions below
+        setTimeout(() => showDetails('https://www.youtube.com/watch?v=' + vParam), 100);
+    }
 
     searchBox.addEventListener('input', (e) => {
         clearTimeout(searchTimeout);
@@ -46,7 +59,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.showDetails = async (url) => {
         modal.style.display = 'flex';
-        formatList.innerHTML = '<div class="loader" style="display:block"></div>';
+        loaderModal.style.display = 'block';
+        progressContainer.style.display = 'none';
+        downloadBtn.style.display = 'none';
 
         try {
             videoPlayer.pause();
@@ -56,37 +71,84 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/details?url=${encodeURIComponent(url)}`);
             const details = await response.json();
 
-            formatList.innerHTML = details.formats
-                .filter(f => f.vcodec !== 'none' || f.acodec !== 'none')
-                .map(f => `
-                    <div class="format-item">
-                        <div>
-                            <strong>${f.ext.toUpperCase()}</strong> - ${f.resolution}
-                            <div style="font-size: 0.8rem; color: #aaa">${f.note}</div>
-                        </div>
-                        <button class="download-btn" onclick="downloadVideo('${url}', '${f.id}', '${details.info.title}.${f.ext}')">
-                            Download
-                        </button>
-                    </div>
-                `).join('');
-
-            videoPlayer.src = `/stream?url=${encodeURIComponent(url)}&formatId=${encodeURIComponent(previewFormat.id)}`;
-            videoPlayerContainer.style.display = 'block';
+            currentVideoId = details.info.id;
+            updateCacheUI(url, currentVideoId, details.info.title, details.cacheInfo, details.formatId);
         } catch (error) {
-            formatList.innerHTML = 'Failed to load formats.';
+            console.error('Failed to load details', error);
         }
     };
 
-    window.downloadVideo = (url, formatId, filename) => {
-        const downloadUrl = `/download?url=${encodeURIComponent(url)}&formatId=${encodeURIComponent(formatId)}&filename=${encodeURIComponent(filename)}`;
-        window.location.href = downloadUrl;
-    };
+    function updateCacheUI(url, videoId, title, cacheInfo, formatId) {
+        clearInterval(pollInterval);
+        loaderModal.style.display = 'none';
+        progressContainer.style.display = 'none';
+        downloadBtn.style.display = 'none';
 
-    window.onclick = (event) => {
+        if (cacheInfo.status !== 'CACHED') {
+            videoPlayerContainer.style.display = 'none';
+            videoPlayer.pause();
+            videoPlayer.src = '';
+        }
+
+        if (cacheInfo.status === 'NONE') {
+            startCaching(url, videoId, title, formatId);
+        } else if (cacheInfo.status === 'DOWNLOADING') {
+            progressContainer.style.display = 'block';
+            progressBar.style.width = `${cacheInfo.progress}%`;
+            progressText.innerText = `${cacheInfo.progress.toFixed(1)}%`;
+            pollCacheStatus(url, videoId, title);
+        } else if (cacheInfo.status === 'CACHED') {
+            downloadBtn.style.display = 'block';
+            downloadBtn.onclick = () => {
+                window.location.href = `/downloadCached?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(title + '.mp4')}`;
+            };
+            
+            if (videoPlayer.src.indexOf(`/stream?videoId=${encodeURIComponent(videoId)}`) === -1) {
+                videoPlayer.src = `/stream?videoId=${encodeURIComponent(videoId)}`;
+                videoPlayerContainer.style.display = 'block';
+            }
+        }
+    }
+
+    async function startCaching(url, videoId, title, formatId) {
+        progressContainer.style.display = 'block';
+        progressBar.style.width = `0%`;
+        progressText.innerText = `0.0%`;
+
+        try {
+            await fetch(`/cache/start?url=${encodeURIComponent(url)}&videoId=${encodeURIComponent(videoId)}&formatId=${encodeURIComponent(formatId)}`, { method: 'POST' });
+            pollCacheStatus(url, videoId, title);
+        } catch (error) {
+            console.error('Failed to start cache', error);
+            progressContainer.style.display = 'none';
+        }
+    }
+
+    function pollCacheStatus(url, videoId, title) {
+        clearInterval(pollInterval);
+        pollInterval = setInterval(async () => {
+            try {
+                const response = await fetch(`/cache/status?videoId=${encodeURIComponent(videoId)}`);
+                const cacheInfo = await response.json();
+                updateCacheUI(url, videoId, title, cacheInfo);
+            } catch (error) {
+                console.error("Failed polling", error);
+            }
+        }, 1000);
+    }
+
+    window.onclick = async (event) => {
         if (event.target === modal) {
             modal.style.display = 'none';
             videoPlayer.pause();
             videoPlayer.src = '';
+            clearInterval(pollInterval);
+            if (currentVideoId) {
+                try {
+                    await fetch(`/cache/cancel?videoId=${encodeURIComponent(currentVideoId)}`, { method: 'POST' });
+                } catch (e) { console.error("Cancel failed", e); }
+                currentVideoId = null;
+            }
         }
     };
 });

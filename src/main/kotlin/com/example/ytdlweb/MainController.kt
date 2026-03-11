@@ -1,23 +1,23 @@
 package com.example.ytdlweb
 
 import jakarta.servlet.http.HttpServletResponse
-import org.springframework.core.io.FileSystemResource
-import org.springframework.core.io.Resource
 import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpHeaders
-import org.springframework.http.MediaType
-import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Controller
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseBody
+import org.springframework.web.server.ResponseStatusException
+import org.springframework.http.HttpStatus
+import org.springframework.core.io.FileSystemResource
 import java.net.URI
 import java.nio.charset.StandardCharsets
 
 @Controller
 class MainController(private val ytDlpService: YtDlpService) {
 
-    @GetMapping("/")
+    @GetMapping("/", "/watch")
     fun index(): String {
         return "index"
     }
@@ -31,40 +31,53 @@ class MainController(private val ytDlpService: YtDlpService) {
     @GetMapping("/details")
     @ResponseBody
     fun details(@RequestParam url: String): VideoDetails {
-        val details = ytDlpService.getVideoDetails(url)
-        // Pre-cache the best format (first mp4 with video+audio or just first format)
-        val previewFormat = details.formats.find { it.ext == "mp4" && it.vcodec != "none" && it.acodec != "none" }
-            ?: details.formats.find { it.vcodec != "none" && it.acodec != "none" }
-            ?: details.formats.firstOrNull()
-
-        previewFormat?.let {
-            ytDlpService.preview(url, it.id)
-        }
-        return details
+        return ytDlpService.getVideoDetails(url)
     }
 
-    @GetMapping("/download")
-    fun download(
-        @RequestParam url: String,
-        @RequestParam formatId: String,
+    @PostMapping("/cache/start")
+    @ResponseBody
+    fun startCache(@RequestParam url: String, @RequestParam videoId: String, @RequestParam formatId: String) {
+        ytDlpService.startCaching(url, videoId, formatId)
+    }
+
+    @PostMapping("/cache/cancel")
+    @ResponseBody
+    fun cancelCache(@RequestParam videoId: String) {
+        ytDlpService.cancelCaching(videoId)
+    }
+
+    @GetMapping("/cache/status")
+    @ResponseBody
+    fun cacheStatus(@RequestParam videoId: String): CacheInfo {
+        return ytDlpService.getCacheStatus(videoId)
+    }
+
+    @GetMapping("/downloadCached")
+    fun downloadCached(
+        @RequestParam videoId: String,
         @RequestParam filename: String,
         response: HttpServletResponse
     ) {
-        response.contentType = "application/octet-stream"
-        val disposition = ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build()
-        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-        ytDlpService.streamDownload(url, formatId, response.outputStream)
+        val file = java.io.File("cache", "$videoId.mp4")
+        if (file.exists()) {
+            response.contentType = "video/mp4"
+            val disposition = ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build()
+            response.setHeader(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+            file.inputStream().use { input -> input.copyTo(response.outputStream) }
+        } else {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND)
+        }
     }
 
     @GetMapping("/stream")
-    fun stream(
-        @RequestParam url: String
-    ): ResponseEntity<Resource> {
-        val file = ytDlpService.preview(url)
-        val resource = FileSystemResource(file)
-        return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType("video/mp4"))
-            .body(resource)
+    @ResponseBody
+    fun stream(@RequestParam videoId: String, response: HttpServletResponse): FileSystemResource {
+        val file = java.io.File("cache", "$videoId.mp4")
+        if (!file.exists()) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        }
+        response.contentType = "video/mp4"
+        return FileSystemResource(file)
     }
 
     @GetMapping("/proxy")
