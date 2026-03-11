@@ -4,19 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.stereotype.Service
 import java.io.OutputStream
+import java.net.URLEncoder
 import java.util.stream.StreamSupport
-
 
 @Service
 class YtDlpService(private val objectMapper: ObjectMapper) {
 
     fun search(query: String): List<VideoInfo> {
-        val process = ProcessBuilder(
-            "yt-dlp",
-            "--dump-json",
-            "--flat-playlist",
-            "ytsearch10:$query"
-        ).start()
+        val process = ProcessBuilder("yt-dlp", "--dump-json", "--flat-playlist", "ytsearch10:$query").start()
 
         val videos = mutableListOf<VideoInfo>()
         process.inputStream.bufferedReader().useLines { lines ->
@@ -26,15 +21,11 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
             }
         }
         process.waitFor()
-        return videos.sortedByDescending { it.epoch }
+        return videos
     }
 
     fun getVideoDetails(url: String): VideoDetails {
-        val process = ProcessBuilder(
-            "yt-dlp",
-            "--dump-json",
-            url
-        ).start()
+        val process = ProcessBuilder("yt-dlp", "--dump-json", url).start()
 
         val node = objectMapper.readTree(process.inputStream)
         process.waitFor()
@@ -50,23 +41,13 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
             )
         }
 
-        return VideoDetails(
-            info = parseVideoInfo(node),
-            formats = formats
-        )
+        return VideoDetails(info = parseVideoInfo(node), formats = formats)
     }
 
     fun streamDownload(url: String, formatId: String, outputStream: OutputStream) {
-        val process = ProcessBuilder(
-            "yt-dlp",
-            "-f", formatId,
-            "-o", "-",
-            url
-        ).start()
+        val process = ProcessBuilder("yt-dlp", "-f", formatId, "-o", "-", url).start()
 
-        process.inputStream.use { input ->
-            input.copyTo(outputStream)
-        }
+        process.inputStream.use { input -> input.copyTo(outputStream) }
         process.waitFor()
     }
 
@@ -77,12 +58,10 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
             url = node.get("webpage_url")?.asText() ?: "https://www.youtube.com/watch?v=${node.get("id").asText()}",
             thumbnail = StreamSupport.stream(node.get("thumbnails").spliterator(), false)
                 .min { n1, n2 -> n1.get("width")?.asInt(0)?.compareTo(n2.get("width")?.asInt(0) ?: 0) ?: 0 }
-                .orElse(null)?.get("url")
-                ?.asText() ?: "",
-            duration = node.get("duration")?.asInt() ?: 0,
-            uploader = node.get("uploader")?.asText() ?: "Unknown",
-            epoch = node.get("epoch").asLong()
-        )
+                .orElse(null)?.get("url")?.asText()
+                ?.let { "/proxy?url=${URLEncoder.encode(it, "UTF-8")}" } ?: "",
+            duration = node.get("duration_string")?.asText() ?: "-",
+            uploader = node.get("uploader")?.asText() ?: "Unknown")
     }
 }
 
@@ -91,21 +70,12 @@ data class VideoInfo(
     val title: String,
     val url: String,
     val thumbnail: String,
-    val duration: Int,
+    val duration: String,
     val uploader: String,
-    val epoch: Long
 )
 
-data class VideoDetails(
-    val info: VideoInfo,
-    val formats: List<FormatInfo>
-)
+data class VideoDetails(val info: VideoInfo, val formats: List<FormatInfo>)
 
 data class FormatInfo(
-    val id: String,
-    val ext: String,
-    val resolution: String,
-    val note: String,
-    val vcodec: String,
-    val acodec: String
+    val id: String, val ext: String, val resolution: String, val note: String, val vcodec: String, val acodec: String
 )

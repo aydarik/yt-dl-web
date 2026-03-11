@@ -36,8 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <img src="${video.thumbnail}" class="video-thumbnail" alt="${video.title}">
                 <div class="video-info">
                     <div class="video-title">${video.title}</div>
-                    <div class="video-meta">${video.uploader} • ${Math.floor(video.duration / 60)}:${(video.duration % 60).toString().padStart(2, '0')}</div>
-                    <div class="video-meta">${new Date(video.epoch * 1000).toLocaleDateString()}</div>
+                    <div class="video-meta">${video.uploader} • ${video.duration}</div>
                 </div>
             </div>
         `).join('');
