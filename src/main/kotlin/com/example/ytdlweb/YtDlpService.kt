@@ -95,11 +95,6 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                     )
                 }
 
-                args += listOf(
-                    "--sponsorblock-remove", "sponsor,selfpromo",
-                    "--extractor-args", "youtube:player_client=android"
-                )
-
                 val cookies = env.getProperty("COOKIES")
                 if (cookies!= null) {
                     args += listOf(
@@ -108,6 +103,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                 }
 
                 args += listOf(
+                    "--sponsorblock-remove", "sponsor,selfpromo",
                     "--newline",
                     "-o", outputFile.absolutePath,
                     url
