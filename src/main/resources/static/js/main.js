@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const loader = document.getElementById('loader');
     const modal = document.getElementById('modal');
     const formatList = document.getElementById('formatList');
+    const videoPlayer = document.getElementById('videoPlayer');
+    const videoPlayerContainer = document.getElementById('videoPlayerContainer');
 
     let searchTimeout;
 
@@ -47,6 +49,10 @@ document.addEventListener('DOMContentLoaded', () => {
         formatList.innerHTML = '<div class="loader" style="display:block"></div>';
 
         try {
+            videoPlayer.pause();
+            videoPlayer.src = '';
+            videoPlayerContainer.style.display = 'none';
+
             const response = await fetch(`/details?url=${encodeURIComponent(url)}`);
             const details = await response.json();
 
@@ -63,6 +69,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         </button>
                     </div>
                 `).join('');
+
+            videoPlayer.src = `/stream?url=${encodeURIComponent(url)}&formatId=${encodeURIComponent(previewFormat.id)}`;
+            videoPlayerContainer.style.display = 'block';
         } catch (error) {
             formatList.innerHTML = 'Failed to load formats.';
         }
@@ -76,6 +85,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.onclick = (event) => {
         if (event.target === modal) {
             modal.style.display = 'none';
+            videoPlayer.pause();
+            videoPlayer.src = '';
         }
     };
 });

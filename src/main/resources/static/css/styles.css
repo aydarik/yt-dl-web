@@ -134,8 +134,22 @@ h1 {
 
 .format-list {
     margin-top: 1.5rem;
-    max-height: 400px;
+    max-height: 300px;
     overflow-y: auto;
+}
+
+.video-player-container {
+    margin-bottom: 2rem;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    background: #000;
+    line-height: 0;
+}
+
+#videoPlayer {
+    display: block;
+    outline: none;
 }
 
 .format-item {

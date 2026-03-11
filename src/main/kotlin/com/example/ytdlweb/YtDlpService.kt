@@ -3,12 +3,23 @@ package com.example.ytdlweb
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.stereotype.Service
+import java.io.File
 import java.io.OutputStream
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.stream.StreamSupport
+import kotlin.math.absoluteValue
 
 @Service
 class YtDlpService(private val objectMapper: ObjectMapper) {
+    private val cacheDir = File("cache")
+    private val activeDownloads = ConcurrentHashMap<Int, Process>()
+
+    init {
+        if (!cacheDir.exists()) {
+            cacheDir.mkdirs()
+        }
+    }
 
     fun search(query: String): List<VideoInfo> {
         val process = ProcessBuilder("yt-dlp", "--dump-json", "--flat-playlist", "ytsearch10:$query").start()
@@ -37,7 +48,8 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
                 resolution = format.get("resolution")?.asText() ?: "N/A",
                 note = format.get("format_note")?.asText() ?: "",
                 vcodec = format.get("vcodec")?.asText() ?: "none",
-                acodec = format.get("acodec")?.asText() ?: "none"
+                acodec = format.get("acodec")?.asText() ?: "none",
+                url = format.get("url").asText()
             )
         }
 
@@ -49,6 +61,29 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
 
         process.inputStream.use { input -> input.copyTo(outputStream) }
         process.waitFor()
+    }
+
+    fun preview(url: String, formatId: String? = null): File {
+        val hash = url.hashCode().absoluteValue
+        val filename = "${hash}.mp4"
+        val file = File(cacheDir, filename)
+        val partFile = File(cacheDir, "$filename.part")
+
+        if (file.exists()) return file
+        if (partFile.exists() || activeDownloads.containsKey(hash)) return partFile
+
+        if (formatId != null) {
+            val process = ProcessBuilder("yt-dlp", "-f", formatId, "-o", file.absolutePath, url).start()
+            activeDownloads[hash] = process
+
+            // Cleanup on exit
+            Thread {
+                process.waitFor()
+                activeDownloads.remove(hash)
+            }.start()
+        }
+
+        return partFile
     }
 
     private fun parseVideoInfo(node: JsonNode): VideoInfo {
@@ -77,5 +112,11 @@ data class VideoInfo(
 data class VideoDetails(val info: VideoInfo, val formats: List<FormatInfo>)
 
 data class FormatInfo(
-    val id: String, val ext: String, val resolution: String, val note: String, val vcodec: String, val acodec: String
+    val id: String,
+    val ext: String,
+    val resolution: String,
+    val note: String,
+    val vcodec: String,
+    val acodec: String,
+    val url: String
 )
