@@ -5,8 +5,8 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
 }
 
-group = "com.example"
-version = "0.0.1-SNAPSHOT"
+group = "ru.gumerbaev"
+version = "0.0.1"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_21
