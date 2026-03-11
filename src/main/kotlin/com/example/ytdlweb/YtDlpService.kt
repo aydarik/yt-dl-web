@@ -94,6 +94,7 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
                 }
                 args += listOf(
                     "--sponsorblock-remove", "sponsor,selfpromo",
+                    "--extractor-args", "youtube:player_client=android",
                     "--newline",
                     "-o", outputFile.absolutePath,
                     url
