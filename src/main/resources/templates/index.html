@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YT-DL Web Service</title>
+    <link rel="stylesheet" th:href="@{/css/styles.css}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>YT-DL Service</h1>
+        <p>Download your favorite videos directly to your device.</p>
+    </header>
+
+    <div class="search-container">
+        <input type="text" id="searchBox" class="search-box" placeholder="Search by name or paste YouTube URL...">
+    </div>
+
+    <div id="loader" class="loader"></div>
+
+    <div id="resultsGrid" class="results-grid">
+        <!-- Results will be injected here -->
+    </div>
+</div>
+
+<!-- Details Modal -->
+<div id="modal" class="modal">
+    <div class="modal-content">
+        <h2>Select Format</h2>
+        <div id="formatList" class="format-list">
+            <!-- Formats will be injected here -->
+        </div>
+    </div>
+</div>
+
+<script th:src="@{/js/main.js}"></script>
+</body>
+</html>
