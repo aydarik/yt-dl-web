@@ -95,6 +95,7 @@ class YtDlpService(private val objectMapper: ObjectMapper) {
                 args += listOf(
                     "--sponsorblock-remove", "sponsor,selfpromo",
                     "--extractor-args", "youtube:player_client=android",
+                    "--cookies-from-browser", "chrome:/yt-dlp-profile",
                     "--newline",
                     "-o", outputFile.absolutePath,
                     url
