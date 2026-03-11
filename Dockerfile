@@ -8,11 +8,9 @@ RUN gradle build --no-daemon -x test
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
-# Install yt-dlp and ffmpeg
-RUN apt-get update && apt-get install -y \
-    curl \
-    python3 \
-    ffmpeg \
+# Install ffmpeg, deno, yt-dlp
+RUN apt-get update && apt-get install -y curl python3 ffmpeg zip \
+    && curl -L https://deno.land/install.sh -o deno_install.sh && DENO_INSTALL=/usr/local sh deno_install.sh --yes --no-modify-path && rm deno_install.sh \
     && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
