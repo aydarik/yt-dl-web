@@ -4,13 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.core.env.Environment
 import org.springframework.stereotype.Service
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
 @Service
-class YtDlpService(private val objectMapper: ObjectMapper, private val env: Environment) {
+class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
+
+    private val logger = LoggerFactory.getLogger(YtDlpService::class.java)
 
     private val cookies = env.getProperty("COOKIES")
 
@@ -32,18 +35,22 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
             "ytsearch9:$query"
         )
 
-        val process = ProcessBuilder(args).start()
+        val process = ProcessBuilder(args).redirectErrorStream(true).start()
 
         val videos = mutableListOf<VideoInfo>()
         process.inputStream.bufferedReader().useLines { lines ->
             lines.forEach { line ->
-                val node = objectMapper.readTree(line)
-                val videoInfo = parseVideoInfo(node)
-                if (videoInfo != null) {
-                    videoDetails[videoInfo.url] = videoInfo
-                    videos.add(videoInfo)
-                } else {
-                    println("$query: $line")
+                try {
+                    val node = objectMapper.readTree(line)
+                    val videoInfo = parseVideoInfo(node)
+                    if (videoInfo != null) {
+                        videoDetails[videoInfo.url] = videoInfo
+                        videos.add(videoInfo)
+                    } else {
+                        logger.warn("{}: {}", query, line)
+                    }
+                } catch (_: Exception) {
+                    logger.error("{}: {}", query, line)
                 }
             }
         }
@@ -66,14 +73,19 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                 url
             )
 
-            val process = ProcessBuilder(args).start()
+            try {
+                val process = ProcessBuilder(args).redirectErrorStream(true).start()
+                val node = objectMapper.readTree(process.inputStream)
+                process.waitFor()
 
-            val node = objectMapper.readTree(process.inputStream)
-            process.waitFor()
-
-            videoInfo = parseVideoInfo(node)
-            if (videoInfo != null) {
-                videoDetails[url] = videoInfo
+                videoInfo = parseVideoInfo(node)
+                if (videoInfo != null) {
+                    videoDetails[url] = videoInfo
+                } else {
+                    logger.warn("Couldn't get info: {}", url)
+                }
+            } catch (_: Exception) {
+                logger.error("Failed get info: {}", url)
             }
         }
 
@@ -92,11 +104,11 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
 
     fun startCaching(url: String, videoId: String, formatId: String? = null) {
         if (!listOf(CacheStatus.NONE, CacheStatus.FAILED).contains(getCacheStatus(videoId).status)) {
-            println("Skip caching $videoId")
+            logger.info("Skip caching {}", videoId)
             return
         }
 
-        println("Start caching $videoId")
+        logger.info("Start caching {}", videoId)
         downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
 
         thread {
@@ -143,7 +155,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                             downloadProgress[videoId]?.progress = progress
                         }
                         if (line.contains("WARNING") || line.contains("ERROR")) {
-                            println("$videoId: $line")
+                            logger.warn("{}: {}", videoId, line)
                         }
                     }
                 }
@@ -151,10 +163,10 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                 val exitCode = process.waitFor()
                 activeProcesses.remove(videoId)
                 if (exitCode == 0 && outputFile.exists()) {
-                    println("Finished $videoId")
+                    logger.info("Finished {}", videoId)
                     downloadProgress.remove(videoId) // Fully cached, rely on file existence
                 } else {
-                    println("Exited $videoId with code $exitCode")
+                    logger.warn("Exited {} with code {}", videoId, exitCode)
                     downloadProgress[videoId] = CacheInfo(CacheStatus.FAILED, 0.0)
                 }
             } catch (_: Exception) {

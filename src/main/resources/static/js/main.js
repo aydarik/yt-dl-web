@@ -3,7 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const resultsGrid = document.getElementById('resultsGrid');
     const loader = document.getElementById('loader');
     const modal = document.getElementById('modal');
-    const loaderModal = document.getElementById('loaderModal');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
     const progress = document.getElementById('progress');
@@ -61,18 +60,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.showDetails = async (url) => {
         modal.style.display = 'flex';
-        loaderModal.style.display = 'block';
-        progressContainer.style.display = 'none';
+
+        videoPlayerContainer.style.display = 'none';
         downloadBtn.style.display = 'none';
 
-        try {
-            videoPlayer.pause();
-            videoPlayer.src = '';
-            videoPlayerContainer.style.display = 'none';
+        progressContainer.style.display = 'block';
+        progress.innerText = '🚀 Loading...';
+        progressBar.style.width = `0%`;
+        progressText.innerText = `0.0%`;
 
+        try {
             const response = await fetch(`/details?url=${encodeURIComponent(url)}`);
             const details = await response.json();
-            loaderModal.style.display = 'none';
 
             currentVideoId = details.info.id;
             if (details.cacheInfo.status === 'FAILED') {
@@ -80,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             updateCacheUI(url, currentVideoId, details.info.title, details.cacheInfo, details.info.formatId);
         } catch (error) {
-            console.error('Failed to load details', error);
+            progress.innerText = '🚫 Failed to fetch video details.';
         }
     };
 
@@ -108,11 +107,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function startCaching(url, videoId, title, formatId) {
-        progressContainer.style.display = 'block';
-        progress.innerText = '🚀 Loading...';
-        progressBar.style.width = `0%`;
-        progressText.innerText = `0.0%`;
-
         try {
             await fetch(`/cache/start?url=${encodeURIComponent(url)}&videoId=${encodeURIComponent(videoId)}&formatId=${encodeURIComponent(formatId)}`, { method: 'POST' });
             pollCacheStatus(url, videoId, title);
