@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const loaderModal = document.getElementById('loaderModal');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
+    const progress = document.getElementById('progress');
     const progressText = document.getElementById('progressText');
     const downloadBtn = document.getElementById('downloadBtn');
     const videoPlayer = document.getElementById('videoPlayer');
@@ -27,7 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const query = e.target.value;
         if (query.length < 3) return;
 
-        searchTimeout = setTimeout(() => performSearch(query), 500);
+        searchTimeout = setTimeout(() => performSearch(query), 3000);
     });
 
     async function performSearch(query) {
@@ -52,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="video-info">
                     <div class="video-title">${video.title}</div>
                     <div class="video-meta">${video.uploader} • ${video.duration}</div>
+                    <div class="video-date">${new Date(video.timestamp * 1000).toLocaleDateString()}</div>
                 </div>
             </div>
         `).join('');
@@ -70,48 +72,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const response = await fetch(`/details?url=${encodeURIComponent(url)}`);
             const details = await response.json();
+            loaderModal.style.display = 'none';
 
             currentVideoId = details.info.id;
-            updateCacheUI(url, currentVideoId, details.info.title, details.cacheInfo, details.formatId);
+            if (details.cacheInfo.status === 'FAILED') {
+                details.cacheInfo.status = 'NONE'
+            }
+            updateCacheUI(url, currentVideoId, details.info.title, details.cacheInfo, details.info.formatId);
         } catch (error) {
             console.error('Failed to load details', error);
         }
     };
 
     function updateCacheUI(url, videoId, title, cacheInfo, formatId) {
-        clearInterval(pollInterval);
-        loaderModal.style.display = 'none';
-        progressContainer.style.display = 'none';
-        downloadBtn.style.display = 'none';
-
-        if (cacheInfo.status !== 'CACHED') {
-            videoPlayerContainer.style.display = 'none';
-            videoPlayer.pause();
-            videoPlayer.src = '';
-        }
-
         if (cacheInfo.status === 'NONE') {
             startCaching(url, videoId, title, formatId);
         } else if (cacheInfo.status === 'DOWNLOADING') {
-            progressContainer.style.display = 'block';
             progressBar.style.width = `${cacheInfo.progress}%`;
             progressText.innerText = `${cacheInfo.progress.toFixed(1)}%`;
-            pollCacheStatus(url, videoId, title);
         } else if (cacheInfo.status === 'CACHED') {
+            clearInterval(pollInterval);
+            progressContainer.style.display = 'none';
             downloadBtn.style.display = 'block';
             downloadBtn.onclick = () => {
-                window.location.href = `/downloadCached?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(title + '.mp4')}`;
+                window.location.href = `/download?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(title + '.mp4')}`;
             };
             
-            if (videoPlayer.src.indexOf(`/stream?videoId=${encodeURIComponent(videoId)}`) === -1) {
-                videoPlayer.src = `/stream?videoId=${encodeURIComponent(videoId)}`;
-                videoPlayerContainer.style.display = 'block';
-            }
+            videoPlayer.src = `/stream?videoId=${encodeURIComponent(videoId)}`;
+            videoPlayerContainer.style.display = 'block';
+            videoPlayer.play();
+        } else {
+            clearInterval(pollInterval);
+            progress.innerText = '🚫 Failed to load the video.';
         }
     }
 
     async function startCaching(url, videoId, title, formatId) {
         progressContainer.style.display = 'block';
+        progress.innerText = '🚀 Loading...';
         progressBar.style.width = `0%`;
         progressText.innerText = `0.0%`;
 
@@ -120,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
             pollCacheStatus(url, videoId, title);
         } catch (error) {
             console.error('Failed to start cache', error);
-            progressContainer.style.display = 'none';
+            progress.innerText = '❌ Failed to start loading the video.';
         }
     }
 

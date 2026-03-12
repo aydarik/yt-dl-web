@@ -30,7 +30,7 @@ class MainController(private val ytDlpService: YtDlpService) {
 
     @GetMapping("/details")
     @ResponseBody
-    fun details(@RequestParam url: String): VideoDetails {
+    fun details(@RequestParam url: String): VideoDetails? {
         return ytDlpService.getVideoDetails(url)
     }
 
@@ -52,12 +52,8 @@ class MainController(private val ytDlpService: YtDlpService) {
         return ytDlpService.getCacheStatus(videoId)
     }
 
-    @GetMapping("/downloadCached")
-    fun downloadCached(
-        @RequestParam videoId: String,
-        @RequestParam filename: String,
-        response: HttpServletResponse
-    ) {
+    @GetMapping("/download")
+    fun download(@RequestParam videoId: String, @RequestParam filename: String, response: HttpServletResponse) {
         val file = java.io.File("cache", "$videoId.mp4")
         if (file.exists()) {
             response.contentType = "video/mp4"
