@@ -28,6 +28,8 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                 if (videoInfo != null) {
                     videoDetails[videoInfo.url] = videoInfo
                     videos.add(videoInfo)
+                } else {
+                    println("$query: $line")
                 }
             }
         }
@@ -64,8 +66,12 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
     }
 
     fun startCaching(url: String, videoId: String, formatId: String? = null) {
-        if (!listOf(CacheStatus.NONE, CacheStatus.FAILED).contains(getCacheStatus(videoId).status)) return
+        if (!listOf(CacheStatus.NONE, CacheStatus.FAILED).contains(getCacheStatus(videoId).status)) {
+            println("Skip caching $videoId")
+            return
+        }
 
+        println("Start caching $videoId")
         downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
 
         thread {
@@ -110,7 +116,10 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                     lines.forEach { line ->
                         regex.find(line)?.let { matchResult ->
                             val progress = matchResult.groupValues[1].toDoubleOrNull() ?: 0.0
-                            downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, progress)
+                            downloadProgress[videoId]?.progress = progress
+                        }
+                        if (line.contains("WARNING") || line.contains("ERROR")) {
+                            println("$videoId: $line")
                         }
                     }
                 }
@@ -118,8 +127,10 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                 val exitCode = process.waitFor()
                 activeProcesses.remove(videoId)
                 if (exitCode == 0 && outputFile.exists()) {
+                    println("Finished $videoId")
                     downloadProgress.remove(videoId) // Fully cached, rely on file existence
                 } else {
+                    println("Exited $videoId with code $exitCode")
                     downloadProgress[videoId] = CacheInfo(CacheStatus.FAILED, 0.0)
                 }
             } catch (_: Exception) {
@@ -195,7 +206,7 @@ enum class CacheStatus {
 
 data class CacheInfo(
     val status: CacheStatus,
-    val progress: Double
+    var progress: Double
 )
 
 data class VideoDetails(
