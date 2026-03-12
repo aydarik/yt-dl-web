@@ -12,13 +12,27 @@ import kotlin.concurrent.thread
 @Service
 class YtDlpService(private val objectMapper: ObjectMapper, private val env: Environment) {
 
+    private val cookies = env.getProperty("COOKIES")
+
     private val videoDetails = ConcurrentHashMap<String, VideoInfo>()
     private val downloadProgress = ConcurrentHashMap<String, CacheInfo>()
     private val activeProcesses = ConcurrentHashMap<String, Process>()
+
     private val cacheDir = File("cache").apply { mkdirs() }
 
     fun search(query: String): List<VideoInfo> {
-        val process = ProcessBuilder("yt-dlp", "--dump-json", "ytsearch9:$query").start()
+        val args = mutableListOf("yt-dlp")
+        if (cookies != null) {
+            args += listOf(
+                "--cookies", cookies
+            )
+        }
+        args += listOf(
+            "--dump-json",
+            "ytsearch9:$query"
+        )
+
+        val process = ProcessBuilder(args).start()
 
         val videos = mutableListOf<VideoInfo>()
         process.inputStream.bufferedReader().useLines { lines ->
@@ -41,7 +55,18 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
         var videoInfo = videoDetails[url]
 
         if (videoInfo == null) {
-            val process = ProcessBuilder("yt-dlp", "--dump-json", url).start()
+            val args = mutableListOf("yt-dlp")
+            if (cookies != null) {
+                args += listOf(
+                    "--cookies", cookies
+                )
+            }
+            args += listOf(
+                "--dump-json",
+                url
+            )
+
+            val process = ProcessBuilder(args).start()
 
             val node = objectMapper.readTree(process.inputStream)
             process.waitFor()
@@ -93,7 +118,6 @@ class YtDlpService(private val objectMapper: ObjectMapper, private val env: Envi
                     )
                 }
 
-                val cookies = env.getProperty("COOKIES")
                 if (cookies != null) {
                     args += listOf(
                         "--cookies", cookies
