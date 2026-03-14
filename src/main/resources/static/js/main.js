@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let searchTimeout;
     let pollInterval;
     let currentVideoId = null;
+    let isModalOpen = false;
 
     const urlParams = new URLSearchParams(window.location.search);
     const vParam = urlParams.get('v');
@@ -60,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.showDetails = async (url) => {
         modal.style.display = 'flex';
+        isModalOpen = true;
 
         videoPlayerContainer.style.display = 'none';
         downloadBtn.style.display = 'none';
@@ -84,6 +86,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     function updateCacheUI(url, videoId, title, cacheInfo, formatId) {
+        if (isModalOpen != true) return;
+
         if (cacheInfo.status === 'NONE') {
             startCaching(url, videoId, title, formatId);
         } else if (cacheInfo.status === 'DOWNLOADING') {
@@ -132,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.onclick = async (event) => {
         if (event.target === modal) {
             modal.style.display = 'none';
+            isModalOpen = false;
             videoPlayer.pause();
             videoPlayer.src = '';
             clearInterval(pollInterval);

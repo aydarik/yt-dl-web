@@ -24,6 +24,8 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
     private val cacheDir = File("cache").apply { mkdirs() }
 
     fun search(query: String): List<VideoInfo> {
+        logger.info("Search '{}'", query)
+
         val args = mutableListOf("yt-dlp")
         if (cookies != null) {
             args += listOf(
@@ -32,6 +34,8 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
         }
         args += listOf(
             "--dump-json",
+            "--flat-playlist",
+            "--retries", "1",
             "ytsearch9:$query"
         )
 
@@ -42,11 +46,10 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             lines.forEach { line ->
                 try {
                     val node = objectMapper.readTree(line)
-                    val videoInfo = parseVideoInfo(node)
+                    val videoInfo = parseVideoInfo(node, false)
                     if (videoInfo != null) {
-                        videoDetails[videoInfo.url] = videoInfo
                         videos.add(videoInfo)
-                    } else {
+                    } else if (!line.isBlank()) {
                         logger.warn("{}: {}", query, line)
                     }
                 } catch (_: Exception) {
@@ -62,6 +65,8 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
         var videoInfo = videoDetails[url]
 
         if (videoInfo == null) {
+            logger.info("Details '{}'", url)
+
             val args = mutableListOf("yt-dlp")
             if (cookies != null) {
                 args += listOf(
@@ -70,6 +75,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             }
             args += listOf(
                 "--dump-json",
+                "--retries", "1",
                 url
             )
 
@@ -78,7 +84,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                 val node = objectMapper.readTree(process.inputStream)
                 process.waitFor()
 
-                videoInfo = parseVideoInfo(node)
+                videoInfo = parseVideoInfo(node, true)
                 if (videoInfo != null) {
                     videoDetails[url] = videoInfo
                 } else {
@@ -108,7 +114,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             return
         }
 
-        logger.info("Start caching {}", videoId)
+        logger.info("Download '{}'", videoId)
         downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
 
         thread {
@@ -138,6 +144,10 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
 
                 args += listOf(
                     "--sponsorblock-remove", "sponsor,selfpromo",
+                    "--no-playlist",
+                    "--retries", "3",
+                    "--progress-delta", "1",
+                    "--max-filesize", "1000M",
                     "--newline",
                     "-o", outputFile.absolutePath,
                     url
@@ -166,7 +176,11 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                     logger.info("Finished {}", videoId)
                     downloadProgress.remove(videoId) // Fully cached, rely on file existence
                 } else {
-                    logger.warn("Exited {} with code {}", videoId, exitCode)
+                    if (exitCode == 143) {
+                        logger.info("Terminated {}", videoId)
+                    } else {
+                        logger.warn("Exited {} with code {}", videoId, exitCode)
+                    }
                     downloadProgress[videoId] = CacheInfo(CacheStatus.FAILED, 0.0)
                 }
             } catch (_: Exception) {
@@ -184,32 +198,36 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
         downloadProgress.remove(videoId)
     }
 
-    private fun parseVideoInfo(node: JsonNode): VideoInfo? {
+    private fun parseVideoInfo(node: JsonNode, withFormat: Boolean): VideoInfo? {
         val id = node.get("id") ?: return null
 
-        val format = node.get("formats")?.mapNotNull { format ->
-            try {
-                FormatInfo(
-                    id = format.get("format_id").asText(),
-                    ext = format.get("ext").asText(),
-                    resolution = format.get("resolution")?.asText(),
-                    note = format.get("format_note")?.asText(),
-                    vcodec = format.get("vcodec")?.asText() ?: "none",
-                    acodec = format.get("acodec")?.asText() ?: "none",
-                    url = format.get("url").asText()
-                )
-            } catch (_: Exception) {
-                null
-            }
-        }?.filter { it.ext == "mp4" && it.vcodec != "none" && it.acodec != "none" }
-            ?.filter { it.resolution?.matches(Regex("""^\d{2,5}x\d{2,5}$""")) ?: false }
-            ?.associate { it.id to it.resolution!!.split("x").last().toInt() }
-            ?.filter { it.value in 360..720 }
-            ?.minByOrNull { it.value }
+        val format = if (withFormat) {
+            node.get("formats")?.mapNotNull { format ->
+                try {
+                    FormatInfo(
+                        id = format.get("format_id").asText(),
+                        ext = format.get("ext").asText(),
+                        resolution = format.get("resolution")?.asText(),
+                        note = format.get("format_note")?.asText(),
+                        vcodec = format.get("vcodec")?.asText() ?: "none",
+                        acodec = format.get("acodec")?.asText() ?: "none",
+                        url = format.get("url").asText()
+                    )
+                } catch (_: Exception) {
+                    null
+                }
+            }?.filter { it.ext == "mp4" && it.vcodec != "none" && it.acodec != "none" }
+                ?.filter { it.resolution?.matches(Regex("""^\d{2,5}x\d{2,5}$""")) ?: false }
+                ?.associate { it.id to it.resolution!!.split("x").last().toInt() }
+                ?.filter { it.value in 360..720 }
+                ?.minByOrNull { it.value }
+        } else {
+            null
+        }
 
         return VideoInfo(
             id = id.asText(),
-            title = node.get("title").asText(),
+            title = node.get("title")?.asText() ?: "Unknown",
             url = node.get("webpage_url")?.asText() ?: "https://www.youtube.com/watch?v=${id.asText()}",
             thumbnail = "/proxy?url=${
                 URLEncoder.encode(
