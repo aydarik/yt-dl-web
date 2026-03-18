@@ -53,7 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="video-info">
                     <div class="video-title">${video.title}</div>
                     <div class="video-meta">${video.uploader} • ${video.duration}</div>
-                    <div class="video-date">${new Date(video.timestamp * 1000).toLocaleDateString()}</div>
                 </div>
             </div>
         `).join('');

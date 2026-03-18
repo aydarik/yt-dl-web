@@ -87,6 +87,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                 videoInfo = parseVideoInfo(node, true)
                 if (videoInfo != null) {
                     videoDetails[url] = videoInfo
+                    logger.info(videoInfo.title)
                 } else {
                     logger.warn("Couldn't get info: {}", url)
                 }
@@ -114,7 +115,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             return
         }
 
-        logger.info("Download '{}'", videoId)
+        logger.info("Downloading '{}'", videoId)
         downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
 
         thread {
@@ -237,7 +238,6 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             }",
             duration = node.get("duration_string")?.asText() ?: "-",
             uploader = node.get("uploader")?.asText() ?: "Unknown",
-            timestamp = node.get("timestamp")?.asLong(),
             formatId = format?.key
         )
     }
@@ -250,7 +250,6 @@ data class VideoInfo(
     val thumbnail: String,
     val duration: String,
     val uploader: String,
-    val timestamp: Long?,
     val formatId: String?
 )
 
