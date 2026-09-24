@@ -35,29 +35,39 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
         args += listOf(
             "--dump-json",
             "--flat-playlist",
+            "--no-playlist",
+            "--no-warnings",
             "--retries", "1",
-            "ytsearch9:$query"
+            "--default-search", "ytsearch9",
+            "--",
+            query
         )
 
-        val process = ProcessBuilder(args).redirectErrorStream(true).start()
+        val process = ProcessBuilder(args).redirectErrorStream(false).start()
 
         val videos = mutableListOf<VideoInfo>()
         process.inputStream.bufferedReader().useLines { lines ->
             lines.forEach { line ->
                 try {
-                    val node = objectMapper.readTree(line)
-                    val videoInfo = parseVideoInfo(node, false)
-                    if (videoInfo != null) {
-                        videos.add(videoInfo)
-                    } else if (!line.isBlank()) {
-                        logger.warn("{}: {}", query, line)
+                    if (line.isNotBlank()) {
+                        val node = objectMapper.readTree(line)
+                        val videoInfo = parseVideoInfo(node, false)
+                        if (videoInfo != null) {
+                            videos.add(videoInfo)
+                        } else {
+                            logger.warn("Unparseable video info for query '{}': {}", query, line)
+                        }
                     }
-                } catch (_: Exception) {
-                    logger.error("{}: {}", query, line)
+                } catch (e: Exception) {
+                    logger.error("Failed to parse search line for query '{}': {}", query, line, e)
                 }
             }
         }
-        process.waitFor()
+        val exitCode = process.waitFor()
+        if (exitCode != 0) {
+            val stderr = process.errorStream.bufferedReader().readText()
+            logger.warn("Search exited with code {} for '{}': {}", exitCode, query, stderr.trim())
+        }
         return videos
     }
 
@@ -75,24 +85,33 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             }
             args += listOf(
                 "--dump-json",
+                "--no-playlist",
+                "--no-warnings",
                 "--retries", "1",
+                "--",
                 url
             )
 
             try {
-                val process = ProcessBuilder(args).redirectErrorStream(true).start()
-                val node = objectMapper.readTree(process.inputStream)
-                process.waitFor()
+                val process = ProcessBuilder(args).redirectErrorStream(false).start()
+                val stdout = process.inputStream.bufferedReader().readText()
+                val exitCode = process.waitFor()
 
-                videoInfo = parseVideoInfo(node, true)
-                if (videoInfo != null) {
-                    videoDetails[url] = videoInfo
-                    logger.info(videoInfo.title)
+                if (exitCode == 0 && stdout.isNotBlank()) {
+                    val node = objectMapper.readTree(stdout)
+                    videoInfo = parseVideoInfo(node, true)
+                    if (videoInfo != null) {
+                        videoDetails[url] = videoInfo
+                        logger.info("Loaded details: {}", videoInfo.title)
+                    } else {
+                        logger.warn("Couldn't parse info: {}", url)
+                    }
                 } else {
-                    logger.warn("Couldn't get info: {}", url)
+                    val stderr = process.errorStream.bufferedReader().readText()
+                    logger.warn("Failed to get info for '{}' (exit code {}): {}", url, exitCode, stderr.trim())
                 }
-            } catch (_: Exception) {
-                logger.error("Failed get info: {}", url)
+            } catch (e: Exception) {
+                logger.error("Failed get info: {}", url, e)
             }
         }
 
@@ -103,10 +122,12 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
     }
 
     fun getCacheStatus(videoId: String): CacheInfo {
+        // Return active progress first so merging/postprocessing files are not reported as CACHED prematurely
+        downloadProgress[videoId]?.let { return it }
         if (File(cacheDir, "$videoId.mp4").exists()) {
             return CacheInfo(CacheStatus.CACHED, 100.0)
         }
-        return downloadProgress[videoId] ?: CacheInfo(CacheStatus.NONE, 0.0)
+        return CacheInfo(CacheStatus.NONE, 0.0)
     }
 
     fun startCaching(url: String, videoId: String, formatId: String? = null) {
@@ -119,21 +140,21 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
         downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
 
         thread {
+            val outputFile = File(cacheDir, "$videoId.mp4")
             try {
-                val outputFile = File(cacheDir, "$videoId.mp4")
                 val args = mutableListOf("yt-dlp")
 
-                if (formatId == null || formatId == "undefined") {
-                    val defaultFormat =
-                        "bestvideo[height>=360][height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height>=360][height<=720][ext=mp4]"
+                if (formatId.isNullOrBlank() || formatId == "undefined" || formatId == "null") {
+                    val defaultFormat = "bv*[height<=720]+ba/b[height<=720]/b"
                     args += listOf(
                         "-f", defaultFormat,
-                        "-S", "height",
+                        "-S", "res:720,ext:mp4:m4a",
                         "--merge-output-format", "mp4"
                     )
                 } else {
                     args += listOf(
-                        "-f", formatId
+                        "-f", formatId,
+                        "--merge-output-format", "mp4"
                     )
                 }
 
@@ -144,6 +165,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                 }
 
                 args += listOf(
+                    "--concurrent-fragments", "4",
                     "--sponsorblock-remove", "sponsor,selfpromo",
                     "--no-playlist",
                     "--retries", "3",
@@ -151,13 +173,14 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                     "--max-filesize", "1000M",
                     "--newline",
                     "-o", outputFile.absolutePath,
+                    "--",
                     url
                 )
 
                 val process = ProcessBuilder(args).redirectErrorStream(true).start()
-
-                val regex = Regex("""\[download\]\s+(\d+\.\d+)%""")
                 activeProcesses[videoId] = process
+
+                val regex = Regex("""\[download\]\s+(\d+(?:\.\d+)?)%""")
 
                 process.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { line ->
@@ -173,18 +196,24 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
 
                 val exitCode = process.waitFor()
                 activeProcesses.remove(videoId)
+
                 if (exitCode == 0 && outputFile.exists()) {
                     logger.info("Finished {}", videoId)
                     downloadProgress.remove(videoId) // Fully cached, rely on file existence
                 } else {
-                    if (exitCode == 143) {
+                    if (exitCode == 143 || !downloadProgress.containsKey(videoId)) {
                         logger.info("Terminated {}", videoId)
+                        downloadProgress.remove(videoId)
                     } else {
                         logger.warn("Exited {} with code {}", videoId, exitCode)
+                        downloadProgress[videoId] = CacheInfo(CacheStatus.FAILED, 0.0)
                     }
-                    downloadProgress[videoId] = CacheInfo(CacheStatus.FAILED, 0.0)
+                    if (exitCode != 0 && outputFile.exists()) {
+                        outputFile.delete()
+                    }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                logger.error("Error during download for {}: {}", videoId, e.message)
                 activeProcesses.remove(videoId)
                 downloadProgress[videoId] = CacheInfo(CacheStatus.FAILED, 0.0)
             }
@@ -192,11 +221,18 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
     }
 
     fun cancelCaching(videoId: String) {
-        activeProcesses[videoId]?.let { process ->
-            process.destroy()
-            activeProcesses.remove(videoId)
-        }
         downloadProgress.remove(videoId)
+        activeProcesses.remove(videoId)?.let { process ->
+            try {
+                process.descendants().forEach { it.destroyForcibly() }
+                process.destroyForcibly()
+            } catch (e: Exception) {
+                logger.warn("Error terminating process tree for {}: {}", videoId, e.message)
+            }
+        }
+        // Clean up partial downloads
+        cacheDir.listFiles { _, name -> name.startsWith(videoId) && (name.endsWith(".part") || name.endsWith(".temp")) }
+            ?.forEach { it.delete() }
     }
 
     private fun parseVideoInfo(node: JsonNode, withFormat: Boolean): VideoInfo? {
@@ -212,7 +248,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                         note = format.get("format_note")?.asText(),
                         vcodec = format.get("vcodec")?.asText() ?: "none",
                         acodec = format.get("acodec")?.asText() ?: "none",
-                        url = format.get("url").asText()
+                        url = format.get("url")?.asText() ?: ""
                     )
                 } catch (_: Exception) {
                     null
@@ -221,7 +257,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                 ?.filter { it.resolution?.matches(Regex("""^\d{2,5}x\d{2,5}$""")) ?: false }
                 ?.associate { it.id to it.resolution!!.split("x").last().toInt() }
                 ?.filter { it.value in 360..720 }
-                ?.minByOrNull { it.value }
+                ?.maxByOrNull { it.value }
         } else {
             null
         }

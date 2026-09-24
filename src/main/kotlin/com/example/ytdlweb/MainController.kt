@@ -34,26 +34,43 @@ class MainController(private val ytDlpService: YtDlpService) {
         return ytDlpService.getVideoDetails(url)
     }
 
+    private fun isValidVideoId(videoId: String): Boolean {
+        return videoId.matches(Regex("""^[a-zA-Z0-9_-]{1,64}$"""))
+    }
+
     @PostMapping("/cache/start")
     @ResponseBody
     fun startCache(@RequestParam url: String, @RequestParam videoId: String, @RequestParam formatId: String) {
+        if (!isValidVideoId(videoId)) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST)
+        }
         ytDlpService.startCaching(url, videoId, formatId)
     }
 
     @PostMapping("/cache/cancel")
     @ResponseBody
     fun cancelCache(@RequestParam videoId: String) {
+        if (!isValidVideoId(videoId)) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST)
+        }
         ytDlpService.cancelCaching(videoId)
     }
 
     @GetMapping("/cache/status")
     @ResponseBody
     fun cacheStatus(@RequestParam videoId: String): CacheInfo {
+        if (!isValidVideoId(videoId)) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST)
+        }
         return ytDlpService.getCacheStatus(videoId)
     }
 
     @GetMapping("/download")
     fun download(@RequestParam videoId: String, @RequestParam filename: String, response: HttpServletResponse) {
+        if (!isValidVideoId(videoId)) {
+            response.sendError(HttpServletResponse.SC_BAD_REQUEST)
+            return
+        }
         val file = java.io.File("cache", "$videoId.mp4")
         if (file.exists()) {
             response.contentType = "video/mp4"
@@ -68,6 +85,9 @@ class MainController(private val ytDlpService: YtDlpService) {
     @GetMapping("/stream")
     @ResponseBody
     fun stream(@RequestParam videoId: String, response: HttpServletResponse): FileSystemResource {
+        if (!isValidVideoId(videoId)) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST)
+        }
         val file = java.io.File("cache", "$videoId.mp4")
         if (!file.exists()) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND)
