@@ -54,6 +54,9 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                         val videoInfo = parseVideoInfo(node, false)
                         if (videoInfo != null) {
                             videos.add(videoInfo)
+                            videoDetails[videoInfo.url] = videoInfo
+                            videoDetails[videoInfo.id] = videoInfo
+                            videoDetails["https://www.youtube.com/watch?v=${videoInfo.id}"] = videoInfo
                         } else {
                             logger.warn("Unparseable video info for query '{}': {}", query, line)
                         }
@@ -73,6 +76,13 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
 
     fun getVideoDetails(url: String): VideoDetails? {
         var videoInfo = videoDetails[url]
+
+        if (videoInfo == null) {
+            val idMatch = Regex("""(?:v=|\/shorts\/|\/embed\/|youtu\.be\/|^)([a-zA-Z0-9_-]{11})""").find(url)?.groupValues?.get(1)
+            if (idMatch != null) {
+                videoInfo = videoDetails[idMatch]
+            }
+        }
 
         if (videoInfo == null) {
             logger.info("Details '{}'", url)
@@ -102,6 +112,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                     videoInfo = parseVideoInfo(node, true)
                     if (videoInfo != null) {
                         videoDetails[url] = videoInfo
+                        videoDetails[videoInfo.id] = videoInfo
                         logger.info("Loaded details: {}", videoInfo.title)
                     } else {
                         logger.warn("Couldn't parse info: {}", url)
@@ -124,8 +135,13 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
     fun getCacheStatus(videoId: String): CacheInfo {
         // Return active progress first so merging/postprocessing files are not reported as CACHED prematurely
         downloadProgress[videoId]?.let { return it }
-        if (File(cacheDir, "$videoId.mp4").exists() || File(cacheDir, "$videoId.mp3").exists()) {
-            return CacheInfo(CacheStatus.CACHED, 100.0)
+        val mp4 = File(cacheDir, "$videoId.mp4")
+        val mp3 = File(cacheDir, "$videoId.mp3")
+        val hasMp4 = mp4.exists()
+        val hasMp3 = mp3.exists()
+        if (hasMp4 || hasMp3) {
+            val ext = if (hasMp4) "mp4" else "mp3"
+            return CacheInfo(CacheStatus.CACHED, 100.0, ext = ext, hasMp4 = hasMp4, hasMp3 = hasMp3)
         }
         return CacheInfo(CacheStatus.NONE, 0.0)
     }
@@ -136,8 +152,15 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             return
         }
 
+        val ext = if (audioOnly) "mp3" else "mp4"
         logger.info("Downloading '{}' (audioOnly={})", videoId, audioOnly)
-        downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
+        downloadProgress[videoId] = CacheInfo(
+            status = CacheStatus.DOWNLOADING,
+            progress = 0.0,
+            ext = ext,
+            hasMp4 = !audioOnly,
+            hasMp3 = audioOnly
+        )
 
         thread {
             val ext = if (audioOnly) "mp3" else "mp4"
@@ -353,7 +376,10 @@ enum class CacheStatus {
 
 data class CacheInfo(
     val status: CacheStatus,
-    var progress: Double
+    var progress: Double,
+    val ext: String? = null,
+    val hasMp4: Boolean = false,
+    val hasMp3: Boolean = false
 )
 
 data class VideoDetails(

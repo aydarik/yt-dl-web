@@ -134,17 +134,43 @@ function buildCard(v, index) {
                 ${v.viewCount ? `<span class="dot">·</span><span>${v.viewCount}</span>` : ''}
             </div>
         </div>`;
-    card.addEventListener('click', () => openModal(v.url));
-    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openModal(v.url); });
+    card.addEventListener('click', () => openModal(v.url, v));
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openModal(v.url, v); });
     return card;
 }
 
 // ── Modal ────────────────────────────────────────────────────────
-async function openModal(url) {
+let openModalSeq = 0;
+
+function extractVideoId(urlOrId) {
+    if (!urlOrId) return null;
+    const s = urlOrId.trim();
+    if (/^[a-zA-Z0-9_-]{1,64}$/.test(s) && !s.includes('.') && !s.includes('/') && !s.includes('?')) {
+        return s;
+    }
+    try {
+        const u = new URL(s.startsWith('http') ? s : `https://${s}`);
+        if (u.searchParams.has('v')) return u.searchParams.get('v');
+        const parts = u.pathname.split('/').filter(Boolean);
+        if (u.hostname.includes('youtu.be')) return parts[0] || null;
+        const shortsIdx = parts.indexOf('shorts');
+        if (shortsIdx !== -1 && parts[shortsIdx + 1]) return parts[shortsIdx + 1];
+        const embedIdx = parts.indexOf('embed');
+        if (embedIdx !== -1 && parts[embedIdx + 1]) return parts[embedIdx + 1];
+    } catch {
+        const m = s.match(/(?:v=|\/shorts\/|\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{1,64})/);
+        if (m) return m[1];
+    }
+    return null;
+}
+
+async function openModal(url, preloadedInfo = null) {
+    const seq = ++openModalSeq;
     currentUrl     = url;
-    currentVideoId = null;
-    currentTitle   = null;
+    currentVideoId = preloadedInfo?.id || extractVideoId(url);
+    currentTitle   = preloadedInfo?.title || null;
     selectedFormat = null;
+    isAudioOnly    = false;
 
     // Reset UI
     modal.classList.add('open');
@@ -156,17 +182,54 @@ async function openModal(url) {
     videoPlayer.src = '';
     formatGrid.innerHTML = '';
     actionRow.innerHTML  = '';
-    modalTitle.textContent = 'Loading…';
-    modalMeta.innerHTML    = '';
 
-    // Show loading progress state
-    progressSection.classList.add('visible');
+    if (preloadedInfo) {
+        modalTitle.textContent = preloadedInfo.title;
+        modalMeta.innerHTML = buildMeta(preloadedInfo);
+    } else {
+        modalTitle.textContent = 'Loading…';
+        modalMeta.innerHTML    = '';
+    }
+
+    // Check cache status immediately if video ID is known
+    if (currentVideoId) {
+        try {
+            const cacheRes = await fetch(`/cache/status?videoId=${encodeURIComponent(currentVideoId)}`);
+            if (seq !== openModalSeq) return;
+            if (cacheRes.ok) {
+                const cache = await cacheRes.json();
+                if (cache.status === 'CACHED') {
+                    isAudioOnly = cache.ext === 'mp3';
+                    hide(progressSection);
+                    hide(formatSection);
+                    renderCachedActions({ id: currentVideoId, title: currentTitle || currentVideoId }, cache);
+                    fetchBackgroundDetailsAndFormats(url, currentVideoId, seq, true);
+                    return;
+                } else if (cache.status === 'DOWNLOADING') {
+                    hide(formatSection);
+                    show(progressSection);
+                    progressLabel.textContent = 'Download in progress…';
+                    setProgress(cache.progress || 0);
+                    renderCancelButton();
+                    pollStatus();
+                    fetchBackgroundDetailsAndFormats(url, currentVideoId, seq, false);
+                    return;
+                }
+            }
+        } catch (e) {
+            console.warn('Quick cache check failed, falling back to full details', e);
+        }
+    }
+
+    // Video is not cached (or videoId unknown) — show loading state and fetch video info
+    show(progressSection);
     progressLabel.textContent = 'Fetching video info…';
     progressPct.textContent   = '';
     progressFill.style.width  = '0%';
 
     try {
         const res = await fetch(`/details?url=${encodeURIComponent(url)}`);
+        if (seq !== openModalSeq) return;
         if (!res.ok) throw new Error('details fetch failed');
         const details = await res.json();
         if (!details) throw new Error('no details returned');
@@ -180,10 +243,18 @@ async function openModal(url) {
         modalTitle.textContent = info.title;
         modalMeta.innerHTML = buildMeta(info);
 
-        // Fetch format list (non-blocking — falls back to defaults if slow)
-        loadFormats(url, info, cache);
+        if (cache && cache.status === 'CACHED') {
+            isAudioOnly = cache.ext === 'mp3';
+            hide(progressSection);
+            hide(formatSection);
+            renderCachedActions(info, cache);
+            loadFormats(url, info, cache, true);
+        } else {
+            loadFormats(url, info, cache, false);
+        }
 
     } catch (err) {
+        if (seq !== openModalSeq) return;
         progressLabel.textContent = '⚠️ Failed to fetch video info.';
         progressPct.textContent   = '';
         actionRow.innerHTML = `<button class="btn btn-ghost" id="closeFromErr">Close</button>`;
@@ -192,13 +263,51 @@ async function openModal(url) {
     }
 }
 
-async function loadFormats(url, info, cache) {
+async function fetchBackgroundDetailsAndFormats(url, videoId, seq, isCached) {
+    try {
+        if (!currentTitle) {
+            const res = await fetch(`/details?url=${encodeURIComponent(url)}`);
+            if (seq === openModalSeq && res.ok) {
+                const details = await res.json();
+                if (details?.info) {
+                    currentTitle = details.info.title;
+                    modalTitle.textContent = details.info.title;
+                    modalMeta.innerHTML = buildMeta(details.info);
+                    updateDownloadButtonFilenames(details.info.title);
+                }
+            }
+        }
+        loadFormats(url, { id: videoId, title: currentTitle || videoId }, null, isCached);
+    } catch {
+        /* background fetch failure is non-fatal */
+    }
+}
+
+function updateDownloadButtonFilenames(title) {
+    const dlBtns = actionRow.querySelectorAll('a[data-ext]');
+    dlBtns.forEach(btn => {
+        const ext = btn.dataset.ext;
+        const filename = `${title}.${ext}`;
+        btn.href = `/download?videoId=${encodeURIComponent(currentVideoId)}&filename=${encodeURIComponent(filename)}`;
+        btn.setAttribute('download', filename);
+    });
+}
+
+async function loadFormats(url, info, cache, isAlreadyCached = false) {
     try {
         const res = await fetch(`/formats`);
         const formats = res.ok ? await res.json() : defaultFormats();
-        renderModalReady(info, cache, formats);
+        if (!isAlreadyCached) {
+            renderModalReady(info, cache, formats);
+        } else {
+            populateFormatGrid(formats);
+        }
     } catch {
-        renderModalReady(info, cache, defaultFormats());
+        if (!isAlreadyCached) {
+            renderModalReady(info, cache, defaultFormats());
+        } else {
+            populateFormatGrid(defaultFormats());
+        }
     }
 }
 
@@ -213,10 +322,7 @@ function defaultFormats() {
     ];
 }
 
-function renderModalReady(info, cache, formats) {
-    if (!modal.classList.contains('open')) return; // Modal was closed while loading
-
-    // Render format buttons (select 720p by default)
+function populateFormatGrid(formats) {
     formatGrid.innerHTML = '';
     const defaultId = 'video_720p';
     formats.forEach(fmt => {
@@ -234,25 +340,32 @@ function renderModalReady(info, cache, formats) {
             selectFormat(fmt, formats);
         }
     });
-    // If 720p not found, pick first
     if (!selectedFormat && formats.length) selectFormat(formats[0], formats);
+}
 
-    show(formatSection);
+function renderModalReady(info, cache, formats) {
+    if (!modal.classList.contains('open')) return; // Modal was closed while loading
+
+    populateFormatGrid(formats);
 
     // Check cache status and update UI
-    if (cache.status === 'CACHED') {
-        onCached(info);
-    } else if (cache.status === 'DOWNLOADING') {
+    if (cache && cache.status === 'CACHED') {
+        onCached(info, cache);
+    } else if (cache && cache.status === 'DOWNLOADING') {
+        hide(formatSection);
+        show(progressSection);
         progressLabel.textContent = 'Download in progress…';
-        setProgress(cache.progress);
+        setProgress(cache.progress || 0);
         renderCancelButton();
         pollStatus();
-    } else if (cache.status === 'FAILED') {
+    } else if (cache && cache.status === 'FAILED') {
         hide(progressSection);
+        show(formatSection);
         renderDownloadButton(info);
     } else {
         // NONE — show format picker + Download button
         hide(progressSection);
+        show(formatSection);
         renderDownloadButton(info);
     }
 }
@@ -300,31 +413,49 @@ function renderCancelButton() {
     }
 }
 
-function renderCachedActions(info) {
+function renderCachedActions(info, cache = null) {
     actionRow.innerHTML = '';
 
-    const ext = isAudioOnly ? 'mp3' : 'mp4';
-    const filename = (currentTitle || info.title) + `.${ext}`;
+    const hasMp4 = cache ? (cache.hasMp4 || cache.ext === 'mp4') : !isAudioOnly;
+    const hasMp3 = cache ? (cache.hasMp3 || cache.ext === 'mp3') : isAudioOnly;
 
-    const dlBtn = document.createElement('a');
-    dlBtn.className = 'btn btn-primary';
-    dlBtn.id = 'downloadFileBtn';
-    dlBtn.href = `/download?videoId=${encodeURIComponent(info.id)}&filename=${encodeURIComponent(filename)}`;
-    dlBtn.innerHTML = `⬇ Save ${ext.toUpperCase()}`;
-    actionRow.appendChild(dlBtn);
+    // Play button
+    const playBtn = document.createElement('button');
+    playBtn.className = 'btn btn-primary';
+    playBtn.id = 'playBtn';
+    playBtn.innerHTML = '▶ Play';
+    playBtn.addEventListener('click', () => {
+        videoPlayer.src = `/stream?videoId=${encodeURIComponent(info.id)}`;
+        show(playerWrap);
+        videoPlayer.play();
+        playBtn.style.display = 'none';
+    });
+    actionRow.appendChild(playBtn);
 
-    if (!isAudioOnly) {
-        const playBtn = document.createElement('button');
-        playBtn.className = 'btn btn-secondary';
-        playBtn.id = 'playBtn';
-        playBtn.innerHTML = '▶ Play';
-        playBtn.addEventListener('click', () => {
-            videoPlayer.src = `/stream?videoId=${encodeURIComponent(info.id)}`;
-            show(playerWrap);
-            videoPlayer.play();
-            playBtn.style.display = 'none';
-        });
-        actionRow.appendChild(playBtn);
+    // Save MP4 button
+    if (hasMp4 || !hasMp3) {
+        const filenameMp4 = (currentTitle || info.title || info.id) + '.mp4';
+        const dlMp4Btn = document.createElement('a');
+        dlMp4Btn.className = 'btn btn-secondary';
+        dlMp4Btn.id = 'downloadFileBtn';
+        dlMp4Btn.dataset.ext = 'mp4';
+        dlMp4Btn.href = `/download?videoId=${encodeURIComponent(info.id)}&filename=${encodeURIComponent(filenameMp4)}`;
+        dlMp4Btn.setAttribute('download', filenameMp4);
+        dlMp4Btn.innerHTML = '⬇ Save MP4';
+        actionRow.appendChild(dlMp4Btn);
+    }
+
+    // Save MP3 button
+    if (hasMp3) {
+        const filenameMp3 = (currentTitle || info.title || info.id) + '.mp3';
+        const dlMp3Btn = document.createElement('a');
+        dlMp3Btn.className = 'btn btn-secondary';
+        dlMp3Btn.id = 'downloadMp3Btn';
+        dlMp3Btn.dataset.ext = 'mp3';
+        dlMp3Btn.href = `/download?videoId=${encodeURIComponent(info.id)}&filename=${encodeURIComponent(filenameMp3)}`;
+        dlMp3Btn.setAttribute('download', filenameMp3);
+        dlMp3Btn.innerHTML = '⬇ Save MP3';
+        actionRow.appendChild(dlMp3Btn);
     }
 
     const retryBtn = document.createElement('button');
@@ -337,6 +468,7 @@ function renderCachedActions(info) {
         videoPlayer.pause();
         videoPlayer.src = '';
         hide(progressSection);
+        show(formatSection);
         renderDownloadButton(info);
     });
     actionRow.appendChild(retryBtn);
@@ -409,7 +541,8 @@ function handleStatus(cache) {
         progressLabel.textContent = `Downloading${selectedFormat ? ' ' + selectedFormat.label : ''}…`;
     } else if (cache.status === 'CACHED') {
         clearInterval(pollTimer);
-        onCached({ id: currentVideoId, title: currentTitle });
+        isAudioOnly = cache.ext === 'mp3' || isAudioOnly;
+        onCached({ id: currentVideoId, title: currentTitle }, cache, true);
     } else if (cache.status === 'FAILED') {
         clearInterval(pollTimer);
         progressLabel.innerHTML = '⚠️ Download failed. Try again.';
@@ -421,12 +554,14 @@ function handleStatus(cache) {
     }
 }
 
-function onCached(info) {
+function onCached(info, cache = null, showToast = false) {
     clearInterval(pollTimer);
     hide(progressSection);
-    show(formatSection);
-    renderCachedActions(info);
-    toast(`${isAudioOnly ? 'Audio' : 'Video'} ready!`, 'success');
+    hide(formatSection);
+    renderCachedActions(info, cache);
+    if (showToast) {
+        toast(`${isAudioOnly ? 'Audio' : 'Video'} ready!`, 'success');
+    }
 }
 
 function setProgress(pct) {
@@ -442,10 +577,8 @@ function closeModal() {
     clearInterval(pollTimer);
     videoPlayer.pause();
     videoPlayer.src = '';
+    hide(playerWrap);
 
-    if (currentVideoId) {
-        fetch(`/cache/cancel?videoId=${encodeURIComponent(currentVideoId)}`, { method: 'POST' }).catch(() => {});
-    }
     currentVideoId = null;
     currentUrl     = null;
     currentTitle   = null;

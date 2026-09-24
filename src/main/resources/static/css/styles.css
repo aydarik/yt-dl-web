@@ -547,6 +547,7 @@ body::after {
     border: 1px solid var(--border);
 }
 .btn-secondary:hover { background: var(--surface-2); border-color: var(--border-hover); }
+.action-row .btn-secondary { flex: 1; }
 
 .btn-ghost {
     background: transparent;

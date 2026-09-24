@@ -69,13 +69,24 @@ class MainController(private val ytDlpService: YtDlpService) {
         ytDlpService.cancelCaching(videoId)
     }
 
+    private fun extractVideoId(input: String): String? {
+        val trimmed = input.trim()
+        if (isValidVideoId(trimmed)) return trimmed
+        val regex = Regex("""(?:v=|\/shorts\/|\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{1,64})""")
+        return regex.find(trimmed)?.groupValues?.get(1)?.takeIf { isValidVideoId(it) }
+    }
+
     @GetMapping("/cache/status")
     @ResponseBody
-    fun cacheStatus(@RequestParam videoId: String): CacheInfo {
-        if (!isValidVideoId(videoId)) {
+    fun cacheStatus(
+        @RequestParam(required = false) videoId: String?,
+        @RequestParam(required = false) url: String?
+    ): CacheInfo {
+        val id = videoId?.takeIf { isValidVideoId(it) } ?: url?.let { extractVideoId(it) }
+        if (id == null || !isValidVideoId(id)) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST)
         }
-        return ytDlpService.getCacheStatus(videoId)
+        return ytDlpService.getCacheStatus(id)
     }
 
     @GetMapping("/download")
@@ -88,6 +99,8 @@ class MainController(private val ytDlpService: YtDlpService) {
         val mp4 = File("cache", "$videoId.mp4")
         val mp3 = File("cache", "$videoId.mp3")
         val (file, contentType) = when {
+            filename.endsWith(".mp3", ignoreCase = true) && mp3.exists() -> mp3 to "audio/mpeg"
+            filename.endsWith(".mp4", ignoreCase = true) && mp4.exists() -> mp4 to "video/mp4"
             mp4.exists() -> mp4 to "video/mp4"
             mp3.exists() -> mp3 to "audio/mpeg"
             else -> {
