@@ -1,4 +1,4 @@
-package com.example.ytdlweb
+package ru.gumerbaev.ytdlweb
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
