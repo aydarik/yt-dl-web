@@ -135,7 +135,7 @@ body::after {
 
 #searchBox {
     width: 100%;
-    padding: 1rem 3.2rem 1rem 2.8rem;
+    padding: 1rem 6rem 1rem 2.8rem;
     font-size: 1rem;
     font-family: inherit;
     background: var(--surface);
@@ -155,7 +155,7 @@ body::after {
 
 .search-clear {
     position: absolute;
-    right: 1rem;
+    right: 3.4rem;
     top: 50%;
     transform: translateY(-50%);
     background: none;
@@ -170,6 +170,29 @@ body::after {
 }
 .search-clear:hover { color: var(--text); }
 .search-clear.visible { display: block; }
+
+.search-submit {
+    position: absolute;
+    right: 0.45rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--red);
+    border: none;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: var(--radius-xl);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--transition), transform var(--transition);
+    box-shadow: var(--red-glow);
+}
+.search-submit:hover { background: #e0253d; }
+.search-submit:active { transform: translateY(-50%) scale(0.93); }
 
 /* ─── Loader ────────────────────────────────────────────────── */
 .loader-wrap {

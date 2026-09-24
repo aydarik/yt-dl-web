@@ -5,6 +5,7 @@
 // ── DOM refs ────────────────────────────────────────────────────
 const searchBox       = document.getElementById('searchBox');
 const searchClear     = document.getElementById('searchClear');
+const searchSubmit    = document.getElementById('searchSubmit');
 const loader          = document.getElementById('loader');
 const resultsGrid     = document.getElementById('resultsGrid');
 const modal           = document.getElementById('modal');
@@ -22,7 +23,6 @@ const formatGrid      = document.getElementById('formatGrid');
 const actionRow       = document.getElementById('actionRow');
 
 // ── State ────────────────────────────────────────────────────────
-let searchTimer    = null;
 let pollTimer      = null;
 let currentVideoId = null;
 let currentUrl     = null;
@@ -51,43 +51,34 @@ function show(el)   { el.classList.add('visible'); }
 function hide(el)   { el.classList.remove('visible'); }
 
 // ── Search ───────────────────────────────────────────────────────
+function triggerSearch() {
+    const q = searchBox.value.trim();
+    if (!q) return;
+    if (isYouTubeUrl(q)) { openModal(q); return; }
+    if (q.length >= 3) performSearch(q);
+}
+
 searchBox.addEventListener('input', () => {
     const q = searchBox.value.trim();
     searchClear.classList.toggle('visible', q.length > 0);
 
-    clearTimeout(searchTimer);
-    if (!q) {
-        resultsGrid.innerHTML = '';
-        return;
-    }
-
+    // Immediately open modal for YouTube URLs — no button press needed
     if (isYouTubeUrl(q)) {
-        // Immediate: open details directly
-        clearTimeout(searchTimer);
         openModal(q);
-        return;
     }
-
-    if (q.length < 3) return;
-
-    searchTimer = setTimeout(() => performSearch(q), 800);
 });
+
+searchBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') triggerSearch();
+});
+
+searchSubmit.addEventListener('click', triggerSearch);
 
 searchClear.addEventListener('click', () => {
     searchBox.value = '';
     searchClear.classList.remove('visible');
     resultsGrid.innerHTML = '';
     searchBox.focus();
-});
-
-searchBox.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        clearTimeout(searchTimer);
-        const q = searchBox.value.trim();
-        if (!q) return;
-        if (isYouTubeUrl(q)) { openModal(q); return; }
-        if (q.length >= 3) performSearch(q);
-    }
 });
 
 async function performSearch(query) {
