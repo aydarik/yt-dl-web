@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "ru.gumerbaev"
-version = "0.0.3"
+version = "0.0.1"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_21

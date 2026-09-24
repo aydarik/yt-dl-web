@@ -1,150 +1,482 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const searchBox = document.getElementById('searchBox');
-    const resultsGrid = document.getElementById('resultsGrid');
-    const loader = document.getElementById('loader');
-    const modal = document.getElementById('modal');
-    const progressContainer = document.getElementById('progressContainer');
-    const progressBar = document.getElementById('progressBar');
-    const progress = document.getElementById('progress');
-    const progressText = document.getElementById('progressText');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const videoPlayer = document.getElementById('videoPlayer');
-    const videoPlayerContainer = document.getElementById('videoPlayerContainer');
+/* ─── YT-DL main.js ─────────────────────────────────────────── */
+(() => {
+'use strict';
 
-    let searchTimeout;
-    let pollInterval;
-    let currentVideoId = null;
-    let isModalOpen = false;
+// ── DOM refs ────────────────────────────────────────────────────
+const searchBox       = document.getElementById('searchBox');
+const searchClear     = document.getElementById('searchClear');
+const loader          = document.getElementById('loader');
+const resultsGrid     = document.getElementById('resultsGrid');
+const modal           = document.getElementById('modal');
+const modalClose      = document.getElementById('modalClose');
+const modalTitle      = document.getElementById('modalTitle');
+const modalMeta       = document.getElementById('modalMeta');
+const playerWrap      = document.getElementById('playerWrap');
+const videoPlayer     = document.getElementById('videoPlayer');
+const progressSection = document.getElementById('progressSection');
+const progressLabel   = document.getElementById('progressLabel');
+const progressPct     = document.getElementById('progressPct');
+const progressFill    = document.getElementById('progressFill');
+const formatSection   = document.getElementById('formatSection');
+const formatGrid      = document.getElementById('formatGrid');
+const actionRow       = document.getElementById('actionRow');
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const vParam = urlParams.get('v');
-    if (vParam) {
-        // give modal time to initialize functions below
-        setTimeout(() => showDetails('https://www.youtube.com/watch?v=' + vParam), 100);
+// ── State ────────────────────────────────────────────────────────
+let searchTimer    = null;
+let pollTimer      = null;
+let currentVideoId = null;
+let currentUrl     = null;
+let currentTitle   = null;
+let selectedFormat = null;  // { id, label, formatSpec, sortSpec, type, audioOnly }
+let isAudioOnly    = false;
+
+// ── Helpers ──────────────────────────────────────────────────────
+const isYouTubeUrl = (s) =>
+    /^https?:\/\/(www\.)?(youtube\.com\/(watch|shorts)|youtu\.be\/)/.test(s.trim());
+
+function toast(msg, type = 'info', duration = 3500) {
+    const container = document.getElementById('toast-container');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+    el.innerHTML = `<span>${icons[type] || ''}</span><span>${msg}</span>`;
+    container.appendChild(el);
+    setTimeout(() => {
+        el.classList.add('fadeout');
+        el.addEventListener('animationend', () => el.remove());
+    }, duration);
+}
+
+function show(el)   { el.classList.add('visible'); }
+function hide(el)   { el.classList.remove('visible'); }
+
+// ── Search ───────────────────────────────────────────────────────
+searchBox.addEventListener('input', () => {
+    const q = searchBox.value.trim();
+    searchClear.classList.toggle('visible', q.length > 0);
+
+    clearTimeout(searchTimer);
+    if (!q) {
+        resultsGrid.innerHTML = '';
+        return;
     }
 
-    searchBox.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        const query = e.target.value;
-        if (query.length < 3) return;
+    if (isYouTubeUrl(q)) {
+        // Immediate: open details directly
+        clearTimeout(searchTimer);
+        openModal(q);
+        return;
+    }
 
-        searchTimeout = setTimeout(() => performSearch(query), 3000);
+    if (q.length < 3) return;
+
+    searchTimer = setTimeout(() => performSearch(q), 800);
+});
+
+searchClear.addEventListener('click', () => {
+    searchBox.value = '';
+    searchClear.classList.remove('visible');
+    resultsGrid.innerHTML = '';
+    searchBox.focus();
+});
+
+searchBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        clearTimeout(searchTimer);
+        const q = searchBox.value.trim();
+        if (!q) return;
+        if (isYouTubeUrl(q)) { openModal(q); return; }
+        if (q.length >= 3) performSearch(q);
+    }
+});
+
+async function performSearch(query) {
+    loader.classList.add('visible');
+    resultsGrid.innerHTML = '';
+
+    try {
+        const res = await fetch(`/search?query=${encodeURIComponent(query)}`);
+        if (!res.ok) throw new Error('Search failed');
+        const videos = await res.json();
+
+        if (!videos.length) {
+            resultsGrid.innerHTML = `
+                <div class="state-msg">
+                    <div class="emoji">🎵</div>
+                    <p>No results found for "<strong>${escapeHtml(query)}</strong>"</p>
+                </div>`;
+            return;
+        }
+
+        resultsGrid.innerHTML = '';
+        videos.forEach((v, i) => {
+            const card = buildCard(v, i);
+            resultsGrid.appendChild(card);
+        });
+    } catch (err) {
+        resultsGrid.innerHTML = `
+            <div class="state-msg">
+                <div class="emoji">⚠️</div>
+                <p>Search failed. Check your connection and try again.</p>
+            </div>`;
+    } finally {
+        loader.classList.remove('visible');
+    }
+}
+
+function buildCard(v, index) {
+    const card = document.createElement('div');
+    card.className = 'video-card';
+    card.style.animationDelay = `${index * 0.05}s`;
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', v.title);
+    card.innerHTML = `
+        <div class="card-thumb-wrap">
+            <img src="${v.thumbnail}" alt="${escapeHtml(v.title)}" loading="lazy">
+            <span class="card-duration">${v.duration}</span>
+        </div>
+        <div class="card-body">
+            <div class="card-title">${escapeHtml(v.title)}</div>
+            <div class="card-meta">
+                <span>${escapeHtml(v.uploader)}</span>
+                ${v.viewCount ? `<span class="dot">·</span><span>${v.viewCount}</span>` : ''}
+            </div>
+        </div>`;
+    card.addEventListener('click', () => openModal(v.url));
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openModal(v.url); });
+    return card;
+}
+
+// ── Modal ────────────────────────────────────────────────────────
+async function openModal(url) {
+    currentUrl     = url;
+    currentVideoId = null;
+    currentTitle   = null;
+    selectedFormat = null;
+
+    // Reset UI
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+
+    hide(playerWrap);
+    hide(formatSection);
+    videoPlayer.pause();
+    videoPlayer.src = '';
+    formatGrid.innerHTML = '';
+    actionRow.innerHTML  = '';
+    modalTitle.textContent = 'Loading…';
+    modalMeta.innerHTML    = '';
+
+    // Show loading progress state
+    progressSection.classList.add('visible');
+    progressLabel.textContent = 'Fetching video info…';
+    progressPct.textContent   = '';
+    progressFill.style.width  = '0%';
+
+    try {
+        const res = await fetch(`/details?url=${encodeURIComponent(url)}`);
+        if (!res.ok) throw new Error('details fetch failed');
+        const details = await res.json();
+        if (!details) throw new Error('no details returned');
+
+        const info  = details.info;
+        const cache = details.cacheInfo;
+
+        currentVideoId = info.id;
+        currentTitle   = info.title;
+
+        modalTitle.textContent = info.title;
+        modalMeta.innerHTML = buildMeta(info);
+
+        // Fetch format list (non-blocking — falls back to defaults if slow)
+        loadFormats(url, info, cache);
+
+    } catch (err) {
+        progressLabel.textContent = '⚠️ Failed to fetch video info.';
+        progressPct.textContent   = '';
+        actionRow.innerHTML = `<button class="btn btn-ghost" id="closeFromErr">Close</button>`;
+        document.getElementById('closeFromErr').onclick = closeModal;
+        toast('Could not load video details', 'error');
+    }
+}
+
+async function loadFormats(url, info, cache) {
+    try {
+        const res = await fetch(`/formats`);
+        const formats = res.ok ? await res.json() : defaultFormats();
+        renderModalReady(info, cache, formats);
+    } catch {
+        renderModalReady(info, cache, defaultFormats());
+    }
+}
+
+function defaultFormats() {
+    return [
+        { id: 'video_1080p', label: '1080p HD Video', quality: '1080p', type: 'video', formatSpec: 'bv*[height<=1080]+ba/b[height<=1080]/b', sortSpec: 'res:1080,ext:mp4:m4a' },
+        { id: 'video_720p',  label: '720p HD Video',  quality: '720p',  type: 'video', formatSpec: 'bv*[height<=720]+ba/b[height<=720]/b',   sortSpec: 'res:720,ext:mp4:m4a' },
+        { id: 'video_480p',  label: '480p Video',     quality: '480p',  type: 'video', formatSpec: 'bv*[height<=480]+ba/b[height<=480]/b',   sortSpec: 'res:480,ext:mp4:m4a' },
+        { id: 'video_360p',  label: '360p Video',     quality: '360p',  type: 'video', formatSpec: 'bv*[height<=360]+ba/b[height<=360]/b',   sortSpec: 'res:360,ext:mp4:m4a' },
+        { id: 'audio_mp3',   label: 'Audio Only (MP3)', quality: '128k', type: 'audio', formatSpec: 'ba[acodec^=mp3]/ba/b', sortSpec: '' },
+        { id: 'audio_m4a',   label: 'Audio Only (M4A)', quality: 'best', type: 'audio', formatSpec: 'ba[ext=m4a]/ba/b',     sortSpec: '' },
+    ];
+}
+
+function renderModalReady(info, cache, formats) {
+    if (!modal.classList.contains('open')) return; // Modal was closed while loading
+
+    // Render format buttons (select 720p by default)
+    formatGrid.innerHTML = '';
+    const defaultId = 'video_720p';
+    formats.forEach(fmt => {
+        const btn = document.createElement('button');
+        btn.className = `format-btn${fmt.type === 'audio' ? ' audio-btn' : ''}`;
+        btn.dataset.fmtId = fmt.id;
+        btn.innerHTML = `
+            <span class="format-name">${escapeHtml(fmt.label)}</span>
+            <span class="format-quality">${escapeHtml(fmt.quality)}</span>
+            <span class="format-type-badge">${fmt.type === 'audio' ? '🎵 Audio' : '🎬 Video'}</span>`;
+        btn.addEventListener('click', () => selectFormat(fmt, formats));
+        formatGrid.appendChild(btn);
+
+        if (fmt.id === defaultId) {
+            selectFormat(fmt, formats);
+        }
+    });
+    // If 720p not found, pick first
+    if (!selectedFormat && formats.length) selectFormat(formats[0], formats);
+
+    show(formatSection);
+
+    // Check cache status and update UI
+    if (cache.status === 'CACHED') {
+        onCached(info);
+    } else if (cache.status === 'DOWNLOADING') {
+        progressLabel.textContent = 'Download in progress…';
+        setProgress(cache.progress);
+        renderCancelButton();
+        pollStatus();
+    } else if (cache.status === 'FAILED') {
+        hide(progressSection);
+        renderDownloadButton(info);
+    } else {
+        // NONE — show format picker + Download button
+        hide(progressSection);
+        renderDownloadButton(info);
+    }
+}
+
+function selectFormat(fmt, allFormats) {
+    selectedFormat = fmt;
+    isAudioOnly = fmt.type === 'audio';
+
+    // Update button states
+    allFormats.forEach(f => {
+        const btn = formatGrid.querySelector(`[data-fmt-id="${f.id}"]`);
+        if (btn) btn.classList.toggle('selected', f.id === fmt.id);
+    });
+}
+
+function buildMeta(info) {
+    const parts = [];
+    if (info.uploader) parts.push(`<span>👤 ${escapeHtml(info.uploader)}</span>`);
+    if (info.duration)  parts.push(`<span>⏱ ${escapeHtml(info.duration)}</span>`);
+    if (info.viewCount) parts.push(`<span>👁 ${escapeHtml(info.viewCount)}</span>`);
+    return parts.join('');
+}
+
+// ── Actions ──────────────────────────────────────────────────────
+function renderDownloadButton(info) {
+    actionRow.innerHTML = '';
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.id = 'downloadStartBtn';
+    btn.innerHTML = '⬇ Download';
+    btn.addEventListener('click', () => startDownload(info));
+    actionRow.appendChild(btn);
+}
+
+function renderCancelButton() {
+    // Ensure cancel button is in actionRow
+    if (!document.getElementById('cancelBtn')) {
+        actionRow.innerHTML = '';
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-ghost';
+        btn.id = 'cancelBtn';
+        btn.innerHTML = '✕ Cancel';
+        btn.addEventListener('click', cancelDownload);
+        actionRow.appendChild(btn);
+    }
+}
+
+function renderCachedActions(info) {
+    actionRow.innerHTML = '';
+
+    const ext = isAudioOnly ? 'mp3' : 'mp4';
+    const filename = (currentTitle || info.title) + `.${ext}`;
+
+    const dlBtn = document.createElement('a');
+    dlBtn.className = 'btn btn-primary';
+    dlBtn.id = 'downloadFileBtn';
+    dlBtn.href = `/download?videoId=${encodeURIComponent(info.id)}&filename=${encodeURIComponent(filename)}`;
+    dlBtn.innerHTML = `⬇ Save ${ext.toUpperCase()}`;
+    actionRow.appendChild(dlBtn);
+
+    if (!isAudioOnly) {
+        const playBtn = document.createElement('button');
+        playBtn.className = 'btn btn-secondary';
+        playBtn.id = 'playBtn';
+        playBtn.innerHTML = '▶ Play';
+        playBtn.addEventListener('click', () => {
+            videoPlayer.src = `/stream?videoId=${encodeURIComponent(info.id)}`;
+            show(playerWrap);
+            videoPlayer.play();
+            playBtn.style.display = 'none';
+        });
+        actionRow.appendChild(playBtn);
+    }
+
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'btn btn-ghost';
+    retryBtn.id = 'retryBtn';
+    retryBtn.title = 'Download again with a different format';
+    retryBtn.innerHTML = '↺ Re-download';
+    retryBtn.addEventListener('click', () => {
+        hide(playerWrap);
+        videoPlayer.pause();
+        videoPlayer.src = '';
+        hide(progressSection);
+        renderDownloadButton(info);
+    });
+    actionRow.appendChild(retryBtn);
+}
+
+async function startDownload(info) {
+    if (!selectedFormat) { toast('Please select a quality', 'info'); return; }
+
+    const btn = document.getElementById('downloadStartBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+
+    const params = new URLSearchParams({
+        url:        currentUrl,
+        videoId:    info.id,
+        formatSpec: selectedFormat.formatSpec,
+        sortSpec:   selectedFormat.sortSpec,
+        audioOnly:  String(selectedFormat.type === 'audio'),
     });
 
-    async function performSearch(query) {
-        loader.style.display = 'block';
-        resultsGrid.innerHTML = '';
+    try {
+        const res = await fetch(`/cache/start?${params}`, { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+        // Show progress UI
+        hide(formatSection);
+        show(progressSection);
+        progressLabel.textContent = `Downloading ${selectedFormat.label}…`;
+        setProgress(0);
+        renderCancelButton();
+        pollStatus();
+
+    } catch (err) {
+        toast('Failed to start download', 'error');
+        if (btn) { btn.disabled = false; btn.innerHTML = '⬇ Download'; }
+    }
+}
+
+async function cancelDownload() {
+    if (!currentVideoId) return;
+    try {
+        await fetch(`/cache/cancel?videoId=${encodeURIComponent(currentVideoId)}`, { method: 'POST' });
+    } catch { /* ignore */ }
+
+    videoPlayer.pause();
+    videoPlayer.src = '';
+    hide(playerWrap);
+    hide(progressSection);
+    show(formatSection);
+    renderDownloadButton({ id: currentVideoId, title: currentTitle });
+    toast('Download cancelled', 'info');
+}
+
+// ── Status polling ────────────────────────────────────────────────
+function pollStatus() {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+        if (!currentVideoId) { clearInterval(pollTimer); return; }
         try {
-            const response = await fetch(`/search?query=${encodeURIComponent(query)}`);
-            const videos = await response.json();
-            renderResults(videos);
-        } catch (error) {
-            console.error('Search failed:', error);
-        } finally {
-            loader.style.display = 'none';
-        }
+            const res = await fetch(`/cache/status?videoId=${encodeURIComponent(currentVideoId)}`);
+            if (!res.ok) return;
+            const status = await res.json();
+            handleStatus(status);
+        } catch { /* network hiccup — keep polling */ }
+    }, 1000);
+}
+
+function handleStatus(cache) {
+    if (cache.status === 'DOWNLOADING') {
+        setProgress(cache.progress);
+        progressLabel.textContent = `Downloading${selectedFormat ? ' ' + selectedFormat.label : ''}…`;
+    } else if (cache.status === 'CACHED') {
+        clearInterval(pollTimer);
+        onCached({ id: currentVideoId, title: currentTitle });
+    } else if (cache.status === 'FAILED') {
+        clearInterval(pollTimer);
+        progressLabel.innerHTML = '⚠️ Download failed. Try again.';
+        progressPct.textContent = '';
+        hide(progressSection);
+        show(formatSection);
+        renderDownloadButton({ id: currentVideoId, title: currentTitle });
+        toast('Download failed', 'error');
     }
+}
 
-    function renderResults(videos) {
-        resultsGrid.innerHTML = videos.map(video => `
-            <div class="video-card" onclick="showDetails('${video.url}')">
-                <img src="${video.thumbnail}" class="video-thumbnail" alt="${video.title}">
-                <div class="video-info">
-                    <div class="video-title">${video.title}</div>
-                    <div class="video-meta">${video.uploader} • ${video.duration}</div>
-                </div>
-            </div>
-        `).join('');
+function onCached(info) {
+    clearInterval(pollTimer);
+    hide(progressSection);
+    show(formatSection);
+    renderCachedActions(info);
+    toast(`${isAudioOnly ? 'Audio' : 'Video'} ready!`, 'success');
+}
+
+function setProgress(pct) {
+    const p = Math.min(100, Math.max(0, pct));
+    progressFill.style.width = `${p}%`;
+    progressPct.textContent  = `${p.toFixed(1)}%`;
+}
+
+// ── Modal close ───────────────────────────────────────────────────
+function closeModal() {
+    modal.classList.remove('open');
+    document.body.style.overflow = '';
+    clearInterval(pollTimer);
+    videoPlayer.pause();
+    videoPlayer.src = '';
+
+    if (currentVideoId) {
+        fetch(`/cache/cancel?videoId=${encodeURIComponent(currentVideoId)}`, { method: 'POST' }).catch(() => {});
     }
+    currentVideoId = null;
+    currentUrl     = null;
+    currentTitle   = null;
+    selectedFormat = null;
+    isAudioOnly    = false;
+}
 
-    window.showDetails = async (url) => {
-        modal.style.display = 'flex';
-        isModalOpen = true;
+modalClose.addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.classList.contains('open')) closeModal(); });
 
-        videoPlayerContainer.style.display = 'none';
-        downloadBtn.style.display = 'none';
+// ── URL param ?v=... ──────────────────────────────────────────────
+const vParam = new URLSearchParams(location.search).get('v');
+if (vParam) {
+    setTimeout(() => openModal('https://www.youtube.com/watch?v=' + encodeURIComponent(vParam)), 80);
+}
 
-        progressContainer.style.display = 'block';
-        progress.innerText = '🚀 Loading...';
-        progressBar.style.width = `0%`;
-        progressText.innerText = `0.0%`;
+// ── Escape helper ─────────────────────────────────────────────────
+function escapeHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
 
-        try {
-            const response = await fetch(`/details?url=${encodeURIComponent(url)}`);
-            const details = await response.json();
-
-            currentVideoId = details.info.id;
-            if (details.cacheInfo.status === 'FAILED') {
-                details.cacheInfo.status = 'NONE'
-            }
-            updateCacheUI(url, currentVideoId, details.info.title, details.cacheInfo, details.info.formatId);
-        } catch (error) {
-            progress.innerText = '🚫 Failed to fetch video details.';
-        }
-    };
-
-    function updateCacheUI(url, videoId, title, cacheInfo, formatId) {
-        if (isModalOpen != true) return;
-
-        if (cacheInfo.status === 'NONE') {
-            startCaching(url, videoId, title, formatId);
-        } else if (cacheInfo.status === 'DOWNLOADING') {
-            progressBar.style.width = `${cacheInfo.progress}%`;
-            progressText.innerText = `${cacheInfo.progress.toFixed(1)}%`;
-        } else if (cacheInfo.status === 'CACHED') {
-            clearInterval(pollInterval);
-            progressContainer.style.display = 'none';
-            downloadBtn.style.display = 'block';
-            downloadBtn.onclick = () => {
-                window.location.href = `/download?videoId=${encodeURIComponent(videoId)}&filename=${encodeURIComponent(title + '.mp4')}`;
-            };
-            
-            videoPlayer.src = `/stream?videoId=${encodeURIComponent(videoId)}`;
-            videoPlayerContainer.style.display = 'block';
-            videoPlayer.play();
-        } else {
-            clearInterval(pollInterval);
-            progress.innerText = '🚫 Failed to load the video.';
-        }
-    }
-
-    async function startCaching(url, videoId, title, formatId) {
-        try {
-            await fetch(`/cache/start?url=${encodeURIComponent(url)}&videoId=${encodeURIComponent(videoId)}&formatId=${encodeURIComponent(formatId)}`, { method: 'POST' });
-            pollCacheStatus(url, videoId, title);
-        } catch (error) {
-            console.error('Failed to start cache', error);
-            progress.innerText = '❌ Failed to start loading the video.';
-        }
-    }
-
-    function pollCacheStatus(url, videoId, title) {
-        clearInterval(pollInterval);
-        pollInterval = setInterval(async () => {
-            try {
-                const response = await fetch(`/cache/status?videoId=${encodeURIComponent(videoId)}`);
-                const cacheInfo = await response.json();
-                updateCacheUI(url, videoId, title, cacheInfo);
-            } catch (error) {
-                console.error("Failed polling", error);
-            }
-        }, 1000);
-    }
-
-    window.onclick = async (event) => {
-        if (event.target === modal) {
-            modal.style.display = 'none';
-            isModalOpen = false;
-            videoPlayer.pause();
-            videoPlayer.src = '';
-            clearInterval(pollInterval);
-            if (currentVideoId) {
-                try {
-                    await fetch(`/cache/cancel?videoId=${encodeURIComponent(currentVideoId)}`, { method: 'POST' });
-                } catch (e) { console.error("Cancel failed", e); }
-                currentVideoId = null;
-            }
-        }
-    };
-});
+})();

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.ResponseBody
 import org.springframework.web.server.ResponseStatusException
 import org.springframework.http.HttpStatus
 import org.springframework.core.io.FileSystemResource
+import java.io.File
 import java.net.URI
 import java.nio.charset.StandardCharsets
 
@@ -34,17 +35,29 @@ class MainController(private val ytDlpService: YtDlpService) {
         return ytDlpService.getVideoDetails(url)
     }
 
+    @GetMapping("/formats")
+    @ResponseBody
+    fun formats(): List<DownloadFormat> {
+        return ytDlpService.getAvailableFormats()
+    }
+
     private fun isValidVideoId(videoId: String): Boolean {
         return videoId.matches(Regex("""^[a-zA-Z0-9_-]{1,64}$"""))
     }
 
     @PostMapping("/cache/start")
     @ResponseBody
-    fun startCache(@RequestParam url: String, @RequestParam videoId: String, @RequestParam formatId: String) {
+    fun startCache(
+        @RequestParam url: String,
+        @RequestParam videoId: String,
+        @RequestParam(required = false) formatSpec: String?,
+        @RequestParam(required = false) sortSpec: String?,
+        @RequestParam(defaultValue = "false") audioOnly: Boolean
+    ) {
         if (!isValidVideoId(videoId)) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST)
         }
-        ytDlpService.startCaching(url, videoId, formatId)
+        ytDlpService.startCaching(url, videoId, formatSpec, sortSpec, audioOnly)
     }
 
     @PostMapping("/cache/cancel")
@@ -71,15 +84,21 @@ class MainController(private val ytDlpService: YtDlpService) {
             response.sendError(HttpServletResponse.SC_BAD_REQUEST)
             return
         }
-        val file = java.io.File("cache", "$videoId.mp4")
-        if (file.exists()) {
-            response.contentType = "video/mp4"
-            val disposition = ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build()
-            response.setHeader(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
-            file.inputStream().use { input -> input.copyTo(response.outputStream) }
-        } else {
-            response.sendError(HttpServletResponse.SC_NOT_FOUND)
+        // Check both video and audio cached files
+        val mp4 = File("cache", "$videoId.mp4")
+        val mp3 = File("cache", "$videoId.mp3")
+        val (file, contentType) = when {
+            mp4.exists() -> mp4 to "video/mp4"
+            mp3.exists() -> mp3 to "audio/mpeg"
+            else -> {
+                response.sendError(HttpServletResponse.SC_NOT_FOUND)
+                return
+            }
         }
+        response.contentType = contentType
+        val disposition = ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build()
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+        file.inputStream().use { input -> input.copyTo(response.outputStream) }
     }
 
     @GetMapping("/stream")
@@ -88,11 +107,14 @@ class MainController(private val ytDlpService: YtDlpService) {
         if (!isValidVideoId(videoId)) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST)
         }
-        val file = java.io.File("cache", "$videoId.mp4")
-        if (!file.exists()) {
-            throw ResponseStatusException(HttpStatus.NOT_FOUND)
+        val mp4 = File("cache", "$videoId.mp4")
+        val mp3 = File("cache", "$videoId.mp3")
+        val (file, contentType) = when {
+            mp4.exists() -> mp4 to "video/mp4"
+            mp3.exists() -> mp3 to "audio/mpeg"
+            else -> throw ResponseStatusException(HttpStatus.NOT_FOUND)
         }
-        response.contentType = "video/mp4"
+        response.contentType = contentType
         return FileSystemResource(file)
     }
 

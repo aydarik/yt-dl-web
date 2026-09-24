@@ -124,44 +124,46 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
     fun getCacheStatus(videoId: String): CacheInfo {
         // Return active progress first so merging/postprocessing files are not reported as CACHED prematurely
         downloadProgress[videoId]?.let { return it }
-        if (File(cacheDir, "$videoId.mp4").exists()) {
+        if (File(cacheDir, "$videoId.mp4").exists() || File(cacheDir, "$videoId.mp3").exists()) {
             return CacheInfo(CacheStatus.CACHED, 100.0)
         }
         return CacheInfo(CacheStatus.NONE, 0.0)
     }
 
-    fun startCaching(url: String, videoId: String, formatId: String? = null) {
+    fun startCaching(url: String, videoId: String, formatSpec: String? = null, sortSpec: String? = null, audioOnly: Boolean = false) {
         if (!listOf(CacheStatus.NONE, CacheStatus.FAILED).contains(getCacheStatus(videoId).status)) {
             logger.info("Skip caching {}", videoId)
             return
         }
 
-        logger.info("Downloading '{}'", videoId)
+        logger.info("Downloading '{}' (audioOnly={})", videoId, audioOnly)
         downloadProgress[videoId] = CacheInfo(CacheStatus.DOWNLOADING, 0.0)
 
         thread {
-            val outputFile = File(cacheDir, "$videoId.mp4")
+            val ext = if (audioOnly) "mp3" else "mp4"
+            val outputFile = File(cacheDir, "$videoId.$ext")
             try {
                 val args = mutableListOf("yt-dlp")
 
-                if (formatId.isNullOrBlank() || formatId == "undefined" || formatId == "null") {
-                    val defaultFormat = "bv*[height<=720]+ba/b[height<=720]/b"
-                    args += listOf(
-                        "-f", defaultFormat,
-                        "-S", "res:720,ext:mp4:m4a",
-                        "--merge-output-format", "mp4"
-                    )
+                val effectiveSpec = formatSpec?.takeIf { it.isNotBlank() }
+                val effectiveSort = sortSpec?.takeIf { it.isNotBlank() }
+
+                if (audioOnly) {
+                    // Audio-only: extract and re-encode to the chosen container
+                    val aFormat = effectiveSpec ?: "ba[acodec^=mp3]/ba/b"
+                    args += listOf("-f", aFormat, "-x", "--audio-format", "mp3")
                 } else {
-                    args += listOf(
-                        "-f", formatId,
-                        "--merge-output-format", "mp4"
-                    )
+                    val vFormat = effectiveSpec ?: "bv*[height<=720]+ba/b[height<=720]/b"
+                    args += listOf("-f", vFormat, "--merge-output-format", "mp4")
+                    if (effectiveSort != null) {
+                        args += listOf("-S", effectiveSort)
+                    } else {
+                        args += listOf("-S", "res:720,ext:mp4:m4a")
+                    }
                 }
 
                 if (cookies != null) {
-                    args += listOf(
-                        "--cookies", cookies
-                    )
+                    args += listOf("--cookies", cookies)
                 }
 
                 args += listOf(
@@ -231,9 +233,46 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             }
         }
         // Clean up partial downloads
-        cacheDir.listFiles { _, name -> name.startsWith(videoId) && (name.endsWith(".part") || name.endsWith(".temp")) }
-            ?.forEach { it.delete() }
+        cacheDir.listFiles { _, name ->
+            name.startsWith(videoId) &&
+            (name.endsWith(".part") || name.endsWith(".temp") || name.endsWith(".mp4") || name.endsWith(".mp3"))
+        }?.forEach { it.delete() }
     }
+
+    fun getAvailableFormats(): List<DownloadFormat> = defaultFormats()
+
+    private fun formatsFor(): List<DownloadFormat> {
+        val formats = mutableListOf<DownloadFormat>()
+        listOf(1080, 720, 480, 360).forEach { h ->
+            formats += DownloadFormat(
+                id = "video_${h}p",
+                label = "${h}p HD Video",
+                quality = "${h}p",
+                type = "video",
+                formatSpec = "bv*[height<=${h}]+ba/b[height<=${h}]/b",
+                sortSpec = "res:${h},ext:mp4:m4a"
+            )
+        }
+        formats += DownloadFormat(
+            id = "audio_mp3",
+            label = "Audio Only (MP3)",
+            quality = "128k",
+            type = "audio",
+            formatSpec = "ba[acodec^=mp3]/ba/b",
+            sortSpec = ""
+        )
+        formats += DownloadFormat(
+            id = "audio_m4a",
+            label = "Audio Only (M4A)",
+            quality = "best",
+            type = "audio",
+            formatSpec = "ba[ext=m4a]/ba/b",
+            sortSpec = ""
+        )
+        return formats
+    }
+
+    private fun defaultFormats() = formatsFor()
 
     private fun parseVideoInfo(node: JsonNode, withFormat: Boolean): VideoInfo? {
         val id = node.get("id") ?: return null
@@ -262,6 +301,14 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             null
         }
 
+        val rawViews = node.get("view_count")?.asLong()
+        val viewCount = when {
+            rawViews == null -> null
+            rawViews >= 1_000_000 -> "${rawViews / 1_000_000}M views"
+            rawViews >= 1_000 -> "${rawViews / 1_000}K views"
+            else -> "$rawViews views"
+        }
+
         return VideoInfo(
             id = id.asText(),
             title = node.get("title")?.asText() ?: "Unknown",
@@ -274,6 +321,7 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
             }",
             duration = node.get("duration_string")?.asText() ?: "-",
             uploader = node.get("uploader")?.asText() ?: "Unknown",
+            viewCount = viewCount,
             formatId = format?.key
         )
     }
@@ -286,7 +334,17 @@ data class VideoInfo(
     val thumbnail: String,
     val duration: String,
     val uploader: String,
+    val viewCount: String? = null,
     val formatId: String?
+)
+
+data class DownloadFormat(
+    val id: String,
+    val label: String,
+    val quality: String,
+    val type: String,       // "video" or "audio"
+    val formatSpec: String,
+    val sortSpec: String
 )
 
 enum class CacheStatus {

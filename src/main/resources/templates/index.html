@@ -4,47 +4,91 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YT-DL Web Service</title>
+    <meta name="description" content="Search and download YouTube videos in MP4, HD, or MP3 audio. Fast, clean, no ads.">
     <link rel="stylesheet" th:href="@{/css/styles.css}">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
 </head>
 <body>
-<div class="container">
-    <header>
-        <h1>YT-DL Service</h1>
-        <p>Download your favorite videos directly to your device.</p>
-    </header>
+<div class="app">
+    <div class="container">
+        <!-- Header -->
+        <header class="site-header">
+            <div class="logo">
+                <div class="logo-icon">▶</div>
+                <h1>YT-DL</h1>
+            </div>
+            <p>Search for videos or paste a YouTube URL to download</p>
+        </header>
 
-    <div class="search-container">
-        <input type="text" id="searchBox" class="search-box" placeholder="Search by name or paste YouTube URL...">
-    </div>
+        <!-- Search -->
+        <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input
+                type="text"
+                id="searchBox"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Search or paste a YouTube URL…"
+            >
+            <button class="search-clear" id="searchClear" title="Clear search">✕</button>
+        </div>
 
-    <div id="loader" class="loader"></div>
+        <!-- Loader -->
+        <div class="loader-wrap" id="loader">
+            <div class="spinner"></div>
+            <span>Searching…</span>
+        </div>
 
-    <div id="resultsGrid" class="results-grid">
-        <!-- Results will be injected here -->
+        <!-- Results -->
+        <div id="resultsGrid"></div>
     </div>
 </div>
 
-<!-- Details Modal -->
-<div id="modal" class="modal">
-    <div class="modal-content">
-        <div id="videoPlayerContainer" class="video-player-container" style="display: none;">
-            <video id="videoPlayer" controls width="100%"></video>
+<!-- Modal -->
+<div id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-panel" id="modalPanel">
+        <div class="modal-header">
+            <div class="modal-title-block">
+                <div class="modal-title" id="modalTitle">Loading…</div>
+                <div class="modal-meta" id="modalMeta"></div>
+            </div>
+            <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
         </div>
-        <div id="cacheActions" class="format-list" style="text-align: center; margin-top: 1rem;">
-            <div id="progressContainer" style="display: none; text-align: left; margin: 1rem 0;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                    <span id="progress"></span>
-                    <span id="progressText"></span>
+
+        <div class="modal-body">
+            <!-- Video player -->
+            <div class="player-wrap" id="playerWrap">
+                <video id="videoPlayer" controls playsinline></video>
+            </div>
+
+            <!-- Download progress -->
+            <div class="progress-section" id="progressSection">
+                <div class="progress-header">
+                    <span class="progress-label">
+                        <span class="pulse-dot" id="progressDot"></span>
+                        <span id="progressLabel">Preparing download…</span>
+                    </span>
+                    <span class="progress-pct" id="progressPct">0%</span>
                 </div>
-                <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; height: 10px;">
-                    <div id="progressBar" style="background: #3EA6FF; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="progressFill"></div>
                 </div>
             </div>
-            <button id="downloadBtn" class="download-btn" style="display: none;">Download</button>
+
+            <!-- Format chooser -->
+            <div class="format-section" id="formatSection">
+                <h3>Choose quality</h3>
+                <div class="format-grid" id="formatGrid"></div>
+            </div>
+
+            <!-- Action row -->
+            <div class="action-row" id="actionRow"></div>
         </div>
     </div>
 </div>
+
+<!-- Toast container -->
+<div id="toast-container" aria-live="polite"></div>
 
 <script th:src="@{/js/main.js}"></script>
 </body>
