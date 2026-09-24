@@ -206,13 +206,15 @@ async function openModal(url, preloadedInfo = null) {
                     fetchBackgroundDetailsAndFormats(url, currentVideoId, seq, true);
                     return;
                 } else if (cache.status === 'DOWNLOADING') {
+                    isAudioOnly = cache.ext === 'mp3';
                     hide(formatSection);
                     show(progressSection);
-                    progressLabel.textContent = 'Download in progress…';
+                    const label = cache.ext ? ` ${cache.ext.toUpperCase()}` : '';
+                    progressLabel.textContent = `Downloading${label}…`;
                     setProgress(cache.progress || 0);
                     renderCancelButton();
                     pollStatus();
-                    fetchBackgroundDetailsAndFormats(url, currentVideoId, seq, false);
+                    fetchBackgroundDetailsAndFormats(url, currentVideoId, seq, true);
                     return;
                 }
             }
@@ -249,6 +251,16 @@ async function openModal(url, preloadedInfo = null) {
             hide(formatSection);
             renderCachedActions(info, cache);
             loadFormats(url, info, cache, true);
+        } else if (cache && cache.status === 'DOWNLOADING') {
+            isAudioOnly = cache.ext === 'mp3';
+            hide(formatSection);
+            show(progressSection);
+            const label = cache.ext ? ` ${cache.ext.toUpperCase()}` : '';
+            progressLabel.textContent = `Downloading${label}…`;
+            setProgress(cache.progress || 0);
+            renderCancelButton();
+            pollStatus();
+            loadFormats(url, info, cache, true);
         } else {
             loadFormats(url, info, cache, false);
         }
@@ -263,7 +275,7 @@ async function openModal(url, preloadedInfo = null) {
     }
 }
 
-async function fetchBackgroundDetailsAndFormats(url, videoId, seq, isCached) {
+async function fetchBackgroundDetailsAndFormats(url, videoId, seq, skipReady = false) {
     try {
         if (!currentTitle) {
             const res = await fetch(`/details?url=${encodeURIComponent(url)}`);
@@ -277,7 +289,7 @@ async function fetchBackgroundDetailsAndFormats(url, videoId, seq, isCached) {
                 }
             }
         }
-        loadFormats(url, { id: videoId, title: currentTitle || videoId }, null, isCached);
+        loadFormats(url, { id: videoId, title: currentTitle || videoId }, null, skipReady);
     } catch {
         /* background fetch failure is non-fatal */
     }
@@ -293,17 +305,17 @@ function updateDownloadButtonFilenames(title) {
     });
 }
 
-async function loadFormats(url, info, cache, isAlreadyCached = false) {
+async function loadFormats(url, info, cache, skipReady = false) {
     try {
         const res = await fetch(`/formats`);
         const formats = res.ok ? await res.json() : defaultFormats();
-        if (!isAlreadyCached) {
+        if (!skipReady) {
             renderModalReady(info, cache, formats);
         } else {
             populateFormatGrid(formats);
         }
     } catch {
-        if (!isAlreadyCached) {
+        if (!skipReady) {
             renderModalReady(info, cache, defaultFormats());
         } else {
             populateFormatGrid(defaultFormats());
@@ -508,6 +520,7 @@ async function startDownload(info) {
 
 async function cancelDownload() {
     if (!currentVideoId) return;
+    clearInterval(pollTimer);
     try {
         await fetch(`/cache/cancel?videoId=${encodeURIComponent(currentVideoId)}`, { method: 'POST' });
     } catch { /* ignore */ }
@@ -538,7 +551,8 @@ function pollStatus() {
 function handleStatus(cache) {
     if (cache.status === 'DOWNLOADING') {
         setProgress(cache.progress);
-        progressLabel.textContent = `Downloading${selectedFormat ? ' ' + selectedFormat.label : ''}…`;
+        const label = selectedFormat ? selectedFormat.label : (cache.ext ? cache.ext.toUpperCase() : '');
+        progressLabel.textContent = `Downloading${label ? ' ' + label : ''}…`;
     } else if (cache.status === 'CACHED') {
         clearInterval(pollTimer);
         isAudioOnly = cache.ext === 'mp3' || isAudioOnly;
