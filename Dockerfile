@@ -1,11 +1,11 @@
 # Build stage
-FROM gradle:jdk21 AS build
+FROM gradle:jdk25-alpine AS build
 WORKDIR /home/gradle/src
 COPY --chown=gradle:gradle . .
 RUN gradle build --no-daemon -x test
 
 # Run stage
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:25-jre-resolute
 WORKDIR /app
 
 # Install ffmpeg, deno, yt-dlp
