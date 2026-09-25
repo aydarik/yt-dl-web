@@ -1,8 +1,8 @@
 # Build stage
-FROM gradle:jdk25-alpine AS build
+FROM eclipse-temurin:25-jdk-resolute AS build
 WORKDIR /home/gradle/src
-COPY --chown=gradle:gradle . .
-RUN gradle build --no-daemon -x test
+COPY . .
+RUN ./gradlew bootJar --no-daemon -x test
 
 # Run stage
 FROM eclipse-temurin:25-jre-resolute
