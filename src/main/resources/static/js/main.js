@@ -142,6 +142,19 @@ function buildCard(v, index) {
 // ── Modal ────────────────────────────────────────────────────────
 let openModalSeq = 0;
 
+function updateUrlForVideo(videoId, replace = false) {
+    if (!videoId) return;
+    const targetUrl = `/watch?v=${encodeURIComponent(videoId)}`;
+    const currentRelative = location.pathname + location.search;
+    if (currentRelative !== targetUrl) {
+        if (replace) {
+            history.replaceState({ videoId }, '', targetUrl);
+        } else {
+            history.pushState({ videoId }, '', targetUrl);
+        }
+    }
+}
+
 function extractVideoId(urlOrId) {
     if (!urlOrId) return null;
     const s = urlOrId.trim();
@@ -164,7 +177,7 @@ function extractVideoId(urlOrId) {
     return null;
 }
 
-async function openModal(url, preloadedInfo = null) {
+async function openModal(url, preloadedInfo = null, options = {}) {
     const seq = ++openModalSeq;
     currentUrl     = url;
     currentVideoId = preloadedInfo?.id || extractVideoId(url);
@@ -175,6 +188,10 @@ async function openModal(url, preloadedInfo = null) {
     // Reset UI
     modal.classList.add('open');
     document.body.style.overflow = 'hidden';
+
+    if (currentVideoId) {
+        updateUrlForVideo(currentVideoId, options.replace);
+    }
 
     hide(playerWrap);
     hide(formatSection);
@@ -195,7 +212,7 @@ async function openModal(url, preloadedInfo = null) {
     if (currentVideoId) {
         try {
             const cacheRes = await fetch(`/cache/status?videoId=${encodeURIComponent(currentVideoId)}`);
-            if (seq !== openModalSeq) return;
+            if (seq !== openModalSeq || !modal.classList.contains('open')) return;
             if (cacheRes.ok) {
                 const cache = await cacheRes.json();
                 if (cache.status === 'CACHED') {
@@ -231,7 +248,7 @@ async function openModal(url, preloadedInfo = null) {
 
     try {
         const res = await fetch(`/details?url=${encodeURIComponent(url)}`);
-        if (seq !== openModalSeq) return;
+        if (seq !== openModalSeq || !modal.classList.contains('open')) return;
         if (!res.ok) throw new Error('details fetch failed');
         const details = await res.json();
         if (!details) throw new Error('no details returned');
@@ -241,6 +258,8 @@ async function openModal(url, preloadedInfo = null) {
 
         currentVideoId = info.id;
         currentTitle   = info.title;
+
+        updateUrlForVideo(currentVideoId, options.replace);
 
         modalTitle.textContent = info.title;
         modalMeta.innerHTML = buildMeta(info);
@@ -266,11 +285,11 @@ async function openModal(url, preloadedInfo = null) {
         }
 
     } catch (err) {
-        if (seq !== openModalSeq) return;
+        if (seq !== openModalSeq || !modal.classList.contains('open')) return;
         progressLabel.textContent = '⚠️ Failed to fetch video info.';
         progressPct.textContent   = '';
         actionRow.innerHTML = `<button class="btn btn-ghost" id="closeFromErr">Close</button>`;
-        document.getElementById('closeFromErr').onclick = closeModal;
+        document.getElementById('closeFromErr').onclick = () => closeModal();
         toast('Could not load video details', 'error');
     }
 }
@@ -585,7 +604,10 @@ function setProgress(pct) {
 }
 
 // ── Modal close ───────────────────────────────────────────────────
-function closeModal() {
+function closeModal(options = {}) {
+    const isPopState = (options && typeof options === 'object' && options.fromPopState === true) || options === true;
+
+    openModalSeq++;
     modal.classList.remove('open');
     document.body.style.overflow = '';
     clearInterval(pollTimer);
@@ -598,16 +620,40 @@ function closeModal() {
     currentTitle   = null;
     selectedFormat = null;
     isAudioOnly    = false;
+
+    if (!isPopState) {
+        const currentRelative = location.pathname + location.search;
+        if (currentRelative !== '/') {
+            history.pushState(null, '', '/');
+        }
+    }
 }
 
-modalClose.addEventListener('click', closeModal);
+modalClose.addEventListener('click', () => closeModal());
 modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.classList.contains('open')) closeModal(); });
+
+// ── Popstate navigation ───────────────────────────────────────────
+window.addEventListener('popstate', () => {
+    const params = new URLSearchParams(location.search);
+    const v = params.get('v');
+    if (v) {
+        if (currentVideoId !== v || !modal.classList.contains('open')) {
+            openModal('https://www.youtube.com/watch?v=' + encodeURIComponent(v), null, { fromPopState: true });
+        }
+    } else {
+        if (modal.classList.contains('open')) {
+            closeModal({ fromPopState: true });
+        }
+    }
+});
 
 // ── URL param ?v=... ──────────────────────────────────────────────
 const vParam = new URLSearchParams(location.search).get('v');
 if (vParam) {
-    setTimeout(() => openModal('https://www.youtube.com/watch?v=' + encodeURIComponent(vParam)), 80);
+    setTimeout(() => openModal('https://www.youtube.com/watch?v=' + encodeURIComponent(vParam), null, { replace: true }), 80);
+} else if (location.pathname === '/watch') {
+    history.replaceState(null, '', '/');
 }
 
 // ── Escape helper ─────────────────────────────────────────────────

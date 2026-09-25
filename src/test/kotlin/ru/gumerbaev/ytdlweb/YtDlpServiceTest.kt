@@ -32,6 +32,11 @@ class YtDlpServiceTest {
     }
 
     @Test
+    fun `index returns index view`() {
+        assertEquals("index", controller.index())
+    }
+
+    @Test
     fun `cacheStatus returns NONE when file not cached`() {
         val status = controller.cacheStatus(testVideoId, null)
         assertEquals(CacheStatus.NONE, status.status)
