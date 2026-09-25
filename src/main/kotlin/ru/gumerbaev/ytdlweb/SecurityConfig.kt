@@ -16,34 +16,50 @@ import org.springframework.security.web.SecurityFilterChain
 @EnableWebSecurity
 class SecurityConfig {
 
-    @Bean
-    fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
-        http
-            .csrf { it.disable() }
-            .authorizeHttpRequests { auth ->
-                auth.requestMatchers("/css/**", "/js/**").permitAll()
-                auth.anyRequest().authenticated()
+    private fun parseUsers(env: Environment): List<UserDetails> {
+        val usersEnv = env.getProperty("APP_USERS") ?: return emptyList()
+        return usersEnv.split(",")
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it.contains(":") }
+            .mapNotNull { entry ->
+                val parts = entry.split(":", limit = 2)
+                val username = parts[0].trim()
+                val password = parts[1].trim()
+                if (username.isNotEmpty()) {
+                    @Suppress("DEPRECATION")
+                    User.withDefaultPasswordEncoder()
+                        .username(username)
+                        .password(password)
+                        .roles("USER")
+                        .build()
+                } else null
             }
-            .httpBasic(Customizer.withDefaults())
+    }
+
+    @Bean
+    fun securityFilterChain(http: HttpSecurity, env: Environment): SecurityFilterChain {
+        val users = parseUsers(env)
+        http.csrf { it.disable() }
+
+        if (users.isEmpty()) {
+            http.authorizeHttpRequests { auth ->
+                auth.anyRequest().permitAll()
+            }
+        } else {
+            http
+                .authorizeHttpRequests { auth ->
+                    auth.requestMatchers("/css/**", "/js/**").permitAll()
+                    auth.anyRequest().authenticated()
+                }
+                .httpBasic(Customizer.withDefaults())
+        }
 
         return http.build()
     }
 
     @Bean
     fun userDetailsService(env: Environment): UserDetailsService {
-
-        val usersEnv = env.getProperty("APP_USERS") ?: "admin:admin"
-        val users: List<UserDetails> = usersEnv.split(",")
-            .filter { it.isNotBlank() }
-            .map {
-                val (username, password) = it.split(":")
-                User.withDefaultPasswordEncoder()
-                    .username(username)
-                    .password(password)
-                    .roles("USER")
-                    .build()
-            }
-
+        val users = parseUsers(env)
         return InMemoryUserDetailsManager(users)
     }
 }

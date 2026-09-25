@@ -90,6 +90,15 @@ services:
 
 Export your YouTube cookies from a browser and place the file at `./cookies/cookies.txt`.
 
+### Optional: Authentication
+
+By default, the app is open and requires no credentials. To protect the app with HTTP Basic Authentication, set the `APP_USERS` environment variable with a comma-separated list of `username:password` pairs:
+
+```yaml
+    environment:
+      APP_USERS: "alice:secret,bob:pass123"
+```
+
 ---
 
 ## Limits
