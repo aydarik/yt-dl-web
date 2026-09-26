@@ -178,10 +178,10 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                 } else {
                     val vFormat = effectiveSpec ?: "bv*[height<=720]+ba/b[height<=720]/b"
                     args += listOf("-f", vFormat, "--merge-output-format", "mp4")
-                    if (effectiveSort != null) {
-                        args += listOf("-S", effectiveSort)
+                    args += if (effectiveSort != null) {
+                        listOf("-S", effectiveSort)
                     } else {
-                        args += listOf("-S", "res:720,ext:mp4:m4a")
+                        listOf("-S", "res:720,ext:mp4:m4a")
                     }
                 }
 
@@ -190,7 +190,6 @@ class YtDlpService(private val objectMapper: ObjectMapper, env: Environment) {
                 }
 
                 args += listOf(
-                    "--concurrent-fragments", "4",
                     "--sponsorblock-remove", "sponsor,selfpromo",
                     "--no-playlist",
                     "--retries", "3",
